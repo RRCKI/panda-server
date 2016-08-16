@@ -721,7 +721,31 @@ class TaskBuffer:
             self.proxyPool.putProxy(proxy)
         # return
         return jobs+[nSent,proxyKey]
-        
+
+
+    # get jobs
+    def getJobsGShare(self,nJobs,siteName,prodSourceLabel,cpu,mem,diskSpace,node,timeout,computingElement,
+                atlasRelease,prodUserID,getProxyKey,countryGroup,workingGroup,allowOtherCountry,
+                taskID):
+        # get DBproxy
+        proxy = self.proxyPool.getProxy()
+        # get waiting jobs
+        jobs,nSent = proxy.getJobsGShare(nJobs,siteName,prodSourceLabel,cpu,mem,diskSpace,node,timeout,computingElement,
+                                   atlasRelease,prodUserID,countryGroup,workingGroup,allowOtherCountry,
+                                   taskID)
+        # release proxy
+        self.proxyPool.putProxy(proxy)
+        # get Proxy Key
+        proxyKey = {}
+        if getProxyKey and len(jobs) > 0:
+            # get MetaDB proxy
+            proxy = self.proxyPool.getProxy()
+            # get Proxy Key
+            proxyKey = proxy.getProxyKey(jobs[0].prodUserID)
+            # release proxy
+            self.proxyPool.putProxy(proxy)
+        # return
+        return jobs+[nSent,proxyKey]
 
     # run task assignment
     def runTaskAssignment(self,jobs):

@@ -3292,7 +3292,41 @@ class DBProxy:
             # roll back
             self._rollback()
             return [],0
-        
+
+        # get jobs
+    def getJobsGShare(self, n_jobs, site_name, prod_source_Label, cpu, mem, disk_space, node, timeout, computing_element,
+                    atlas_release, user_id, country_group, working_group, allow_other_country, task_id):
+
+        comment = ' /* DBProxy.getJobsGShare */'
+
+        # aggregated sites which use different app dirs
+        agg_site_map = {
+            'CERN-PROD': {
+                'CERN-RELEASE': 'release',
+                'CERN-UNVALID': 'unvalid',
+                'CERN-BUILDS': 'builds'
+            }
+        }
+
+        # construct where clause
+        dynamic_brokering = False
+        val_map = {}
+        val_map[':oldJobStatus'] = 'activated'
+        sql_where = "WHERE commandToPilot IS NULL AND jobStatus=:oldJobStatus "
+
+        val_map[':computingSite'] = site_name
+        if site_name not in agg_site_map:
+            sql_where += "AND computingSite=:computingSite "
+        else:
+            # aggregated sites
+            sql_where += "AND computingSite IN (:computingSite,"
+            for i, tmp_site in enumerate(agg_site_map[site_name].keys()):
+                tmp_binding = ':computingSite{0}'.format(i)
+                sql_where += '%s,' % tmpKeyName
+                getValMap[tmpKeyName] = tmpAggSite
+                sql_where = sql_where[:-1]
+            sql_where += ") AND commandToPilot IS NULL "
+
 
     # reset job in jobsActive or jobsWaiting
     def resetJob(self,pandaID,activeTable=True,keepSite=False,getOldSubs=False,forPending=True):
