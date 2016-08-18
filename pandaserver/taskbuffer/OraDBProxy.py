@@ -3293,8 +3293,197 @@ class DBProxy:
             self._rollback()
             return [],0
 
-        # get jobs
-    def getJobsGShare(self, n_jobs, site_name, prod_source_Label, cpu, mem, disk_space, node, timeout, computing_element,
+        # prepare the where clause for getJobsGShare
+        def prepare_get_job_selection(self, n_jobs, site_name, prod_source_label, cpu, mem, disk_space, node, timeout,
+                     computing_element, atlas_release, user_id, country_group, working_group, allow_other_country, task_id):
+
+            # aggregated sites which use different app dirs
+            agg_site_map = {
+                'CERN-PROD': {
+                    'CERN-RELEASE': 'release',
+                    'CERN-UNVALID': 'unvalid',
+                    'CERN-BUILDS': 'builds'
+                }
+            }
+
+            # construct where clause
+            dynamic_brokering = False
+            val_map[':oldJobStatus'] = 'activated'
+            sql_where = "WHERE commandToPilot IS NULL AND jobStatus=:oldJobStatus "
+
+            # aggregated sites
+            val_map[':computingSite'] = site_name
+            if site_name not in agg_site_map:
+                sql_where += "AND computingSite=:computingSite "
+            else:
+                sql_where += "AND computingSite IN (:computingSite,"
+                for i, tmp_site in enumerate(agg_site_map[site_name].keys()):
+                    tmp_binding = ':computingSite{0}'.format(i)
+                    sql_where += '%s,' % tmp_binding
+                    val_map[tmp_binding] = tmp_site
+                # replace last comma with closing parenthesis
+                sql_where = sql_where[:-1]
+                sql_where += ")"
+
+            # memory and diskspace
+            if not mem in [0, '0']:
+                sql_where += "AND (minRamCount<=:minRamCount OR minRamCount=0) "
+                val_map[':minRamCount'] = mem
+            if not diskSpace in [0, '0']:
+                sql_where += "AND (maxDiskCount<=:maxDiskCount OR maxDiskCount=0) "
+                val_map[':maxDiskCount'] = diskSpace
+
+            # prodsourcelabels
+            if prod_source_label == 'user':
+                sql_where += "AND prodSourceLabel IN (:prodSourceLabel1, :prodSourceLabel2, :prodSourceLabel3) "
+                val_map.update(
+                    {':prodSourceLabel1': 'user', ':prodSourceLabel2': 'panda', ':prodSourceLabel3': 'install'})
+            elif prod_source_label in [None, 'managed']:
+                sql_where += "AND prodSourceLabel IN (:prodSourceLabel1, :prodSourceLabel2, :prodSourceLabel3, :prodSourceLabel4) "
+                val_map.update({':prodSourceLabel1': 'managed', ':prodSourceLabel2': 'test',
+                                ':prodSourceLabel3': 'prod_test', ':prodSourceLabel4': 'install'})
+            elif prod_source_label == 'test' and computingElement != None:
+                dynamic_brokering = True
+                sql_where += "AND prodSourceLabel=:prodSourceLabel "
+                val_map[':prodSourceLabel'] = prod_source_label
+            else:
+                sql_where += "AND prodSourceLabel=:prodSourceLabel "
+                val_map[':prodSourceLabel'] = prod_source_label
+
+            # user ID
+            if user_id != None:
+                # get compact DN
+                compact_dn = self.cleanUserID(user_id)
+                if compact_dn in ['', 'NULL', None]:
+                    compact_dn = user_id
+                    sql_where += "AND prodUserName=:prodUserName "
+                val_map[':prodUserName'] = compact_dn
+
+            # taskID
+            if task_id not in [None, 'NULL']:
+                sql_where += "AND jediTaskID=:taskID "
+                val_map[':taskID'] = taskID
+
+            # country and working group
+            special_handling = False
+            if prod_source_label == 'user':
+                # update pledge resource ratio
+                self.getPledgeResourceRatio()
+                # other country is allowed to use the pilot
+                if allow_other_country == 'True' and self.beyondPledgeRatio.has_key(site_name) \
+                        and self.beyondPledgeRatio[siteName] > 0:
+                    # check if country group needs to be used for beyond-pledge
+                    if self.checkCountryGroupForBeyondPledge(site_name):
+                        country_group = self.beyondPledgeRatio[site_name]['countryGroup']
+                        special_handling = True
+                    else:
+                        country_group = ''
+                # country group
+                if not countryGroup in ['', None]:
+                    sql_where += "AND countryGroup IN ("
+                    i = 1
+                    for tmp_country in country_group.split(','):
+                        tmp_binding = ":countryGroup%s" % i
+                        sql_where += "%s," % tmp_binding
+                        val_map[tmp_binding] = tmp_country
+                        i += 1
+                    sql_where = sql_where[:-1]
+                    sql_where += ") "
+                # working group
+                if not working_group in ['', None]:
+                    sql_where += "AND workingGroup IN ("
+                    i = 1
+                    for tmp_working_group in working_group.split(','):
+                        tmp_binding = ":workingGroup%s" % i
+                        sql_where += "%s," % tmp_binding
+                        val_map[tmp_binding] = tmp_working_group
+                        i += 1
+                    sql_where = sql_where[:-1]
+                    sql_where += ") "
+
+            # global share THIS NEEDS TO BE THOUGHT THROUGH! WE MIGHT WANT TO RETURN SHARES IN ORDER
+            if prod_source_label in ['managed', None, 'sharetest']:
+                agg_sites_for_fairshare = []
+                if agg_site_map.has_key(site_name):
+                    agg_sites_for_fairshare = agg_site_map[site_name].keys()
+                global_share = self.get_global_share(site_name, agg_sites_for_fairshare)
+                if global_share:
+                    sql_where += "AND gshareglobal_share=:global_share"
+                    val_map[':global_share'] = global_share
+
+            return val_map, sql_where, dynamic_brokering, special_handling
+
+
+    def update_job_status_sent(self, comment, tmp_panda_id, prod_source_label, tmp_site_id, computing_element,
+                               special_handling, special_handling_map):
+        # update job status to SENT
+        sql_update_job_status = """
+                                    UPDATE ATLAS_PANDA.jobsActive4
+                                    SET jobStatus=:newJobStatus,modificationTime=CURRENT_DATE,
+                                    modificationHost=:modificationHost,startTime=CURRENT_DATE
+                                    """
+        var_map_update_job_status = {
+            ':PandaID': tmp_panda_id, ':newJobStatus': 'sent',
+            ':oldJobStatus': 'activated', ':modificationHost': node
+        }
+
+        # set CE
+        if computing_element:
+            sql_update_job_status += ",computingElement=:computingElement"
+            var_map_update_job_status[':computingElement'] = computing_element
+
+        # set special handling
+        if special_handling:
+            sql_update_job_status += ",specialHandling=:specialHandling"
+            special_string = 'localpool'
+            if tmp_panda_id in special_handling_map \
+                    and isinstance(special_handling_map[tmp_panda_id], types.StringType):
+                if not special_string in special_handling_map[tmp_panda_id]:
+                    var_map_update_job_status[':specialHandling'] = "{0},{1}".format(
+                        special_handling_map[tmp_panda_id], special_string)
+                else:
+                    var_map_update_job_status[':specialHandling'] = special_handling_map[tmp_panda_id]
+            else:
+                var_map_update_job_status[':specialHandling'] = special_string
+
+        sql_update_job_status += " WHERE PandaID=:PandaID AND jobStatus=:oldJobStatus"
+
+        # SQL to get nSent
+        sent_limit = time_start - datetime.timedelta(seconds=60)
+        sql_get_nsent = """
+                        SELECT count(*) FROM ATLAS_PANDA.jobsActive4 WHERE jobStatus=:jobStatus
+                        AND prodSourceLabel IN (:prodSourceLabel1,:prodSourceLabel2)
+                        AND computingSite=:computingSite
+                        AND modificationTime>:modificationTime
+                        """
+        var_map_get_nsent = {
+            ':jobStatus': 'sent', ':computingSite': tmp_site_id, ':modificationTime': sent_limit,
+            ':prodSourceLabel1': 'managed', ':prodSourceLabel2': 'test'
+        }
+
+        _logger.debug("{0}{1}{2}".format(sql_update_job_status, comment, str(var_map_update_job_status)))
+        # start transaction
+        self.conn.begin()
+        # update
+        self.cur.execute(sql_update_job_status + comment, varMap)
+        ret_update = self.cur.rowcount
+        if ret_update != 0:
+            # get nSent for production jobs
+            if prod_source_label in [None, 'managed']:
+                _logger.debug("{0}{1}{2}".format(sql_get_nsent, comment, str(var_map_get_nsent)))
+                self.cur.execute("{0}{1}".format(sql_get_nsent, comment), var_map_get_nsent)
+                ret_sent = self.cur.fetchone()
+                if ret_sent is not None:
+                    n_sent, = ret_sent
+        # commit
+        if not self._commit():
+            raise RuntimeError, 'Commit error'
+
+        return n_sent, ret_update
+
+
+    # get jobs based on the global share implementation
+    def getJobsGShare(self, n_jobs, site_name, prod_source_label, cpu, mem, disk_space, node, timeout, computing_element,
                     atlas_release, user_id, country_group, working_group, allow_other_country, task_id):
 
         comment = ' /* DBProxy.getJobsGShare */'
@@ -3309,24 +3498,355 @@ class DBProxy:
         }
 
         # construct where clause
-        dynamic_brokering = False
-        val_map = {}
-        val_map[':oldJobStatus'] = 'activated'
-        sql_where = "WHERE commandToPilot IS NULL AND jobStatus=:oldJobStatus "
+        val_map, sql_where, dynamic_brokering, special_handling = self.prepare_get_job_selection(n_jobs, site_name,
+                                                       prod_source_label, cpu, mem, disk_space, node, timeout,
+                                                       computing_element, atlas_release, user_id, country_group,
+                                                       working_group, allow_other_country, task_id)
 
-        val_map[':computingSite'] = site_name
-        if site_name not in agg_site_map:
-            sql_where += "AND computingSite=:computingSite "
-        else:
-            # aggregated sites
-            sql_where += "AND computingSite IN (:computingSite,"
-            for i, tmp_site in enumerate(agg_site_map[site_name].keys()):
-                tmp_binding = ':computingSite{0}'.format(i)
-                sql_where += '%s,' % tmpKeyName
-                getValMap[tmpKeyName] = tmpAggSite
-                sql_where = sql_where[:-1]
-            sql_where += ") AND commandToPilot IS NULL "
+        ret_jobs = []
+        n_sent = 0
+        val_map_orig = copy.copy(val_map)
+        try:
+            time_limit = datetime.timedelta(seconds=timeout - 10)
+            time_start = datetime.datetime.utcnow()
+            str_name = datetime.datetime.isoformat(time_start)
+            attempt_limit = datetime.datetime.utcnow() - datetime.timedelta(minutes=15)
+            sql_attempt = "AND ((creationTime<:creationTime AND attemptNr>1) OR attemptNr<=1) "
 
+            # get n jobs
+            for iJob in range(n_jobs):
+                val_map = copy.copy(val_map_orig)
+                panda_id = 0
+
+                # set siteID
+                tmp_site_id = site_name
+                if site_name.startswith('ANALY_BNL_ATLAS'):
+                    tmp_site_id = 'ANALY_BNL_ATLAS_1'
+
+                # get file lock
+                _logger.debug("getJobsGShare : {0} -> lock".format(str_name))
+                if (datetime.datetime.utcnow() - time_start) < time_limit:
+                    get_panda_ids = True
+                    panda_ids = []
+                    special_handling_map = {}
+                    # get max priority for analysis jobs
+                    if prod_source_label in ['panda', 'user']:
+                        sql_max_prio = """
+                                       SELECT /*+ INDEX_RS_ASC(tab (PRODSOURCELABEL COMPUTINGSITE JOBSTATUS) ) */ MAX(currentPriority)
+                                       FROM ATLAS_PANDA.jobsActive4 tab
+                                       """
+                        sql_max_prio += sql_where
+                        _logger.debug("{0} {1} {2}".format(sql_max_prio, comment, str(val_map)))
+                        # start transaction
+                        self.conn.begin()
+                        # select
+                        self.cur.arraysize = 10
+                        self.cur.execute(sql_max_prio + comment, getValMap)
+                        tmp_priority, = self.cur.fetchone()
+                        # commit
+                        if not self._commit():
+                            raise RuntimeError, 'Commit error'
+                        # no jobs
+                        if tmp_priority == None:
+                            get_panda_ids = False
+                        else:
+                            # set priority
+                            getValMap[':currentPriority'] = tmp_priority
+
+                    max_id_attempts = 10 # max number of panda IDs that will be tried
+
+                    if get_panda_ids:
+                        # get Panda IDs
+                        sql_panda_ids = """
+                                        SELECT /*+ INDEX_RS_ASC(tab (PRODSOURCELABEL COMPUTINGSITE JOBSTATUS) ) */ PandaID,currentPriority,specialHandling
+                                        FROM ATLAS_PANDA.jobsActive4 tab
+                                        """
+                        sql_panda_ids += sql_where
+                        if ':currentPriority' in getValMap:
+                            sql_panda_ids += "AND currentPriority=:currentPriority "
+                        _logger.debug("{0} {1} {2}".format(sql_panda_ids, comment, str(val_map)))
+                        # start transaction
+                        self.conn.begin()
+                        # select
+                        self.cur.arraysize = 100000
+                        self.cur.execute(sqlP + comment, getValMap)
+                        res_panda_ids = self.cur.fetchall()
+                        # commit
+                        if not self._commit():
+                            raise RuntimeError, 'Commit error'
+                        max_priority = None
+
+                        for tmp_panda_id, tmp_priority, tmp_special_handling in res_panda_ids:
+                            # prepare special handling map
+                            special_handling_map[tmp_panda_id] = tmp_special_handling
+
+                            # get max priority and min PandaID
+                            if max_priority == None or max_priority < tmp_priority:
+                                max_priority = tmp_priority
+                                panda_ids = [tmp_panda_id]
+                            elif max_priority == tmp_priority:
+                                panda_ids.append(tmp_panda_id)
+                        # sort
+                        panda_ids.sort()
+
+                    if not panda_ids:
+                        _logger.debug("getJobs : {0} -> no PandaIDs".format(strName))
+                        ret_update = 0
+                    else:
+                        # update job status to SENT
+                        for i, tmp_panda_id in enumerate(panda_ids):
+                            # max attempts
+                            if i > max_id_attempts:
+                                break
+
+                            n_sent, ret_update = self.update_job_status_sent(self, comment, tmp_panda_id,
+                                                                             prod_source_label, tmp_site_id,
+                                                                             computing_element, special_handling,
+                                                                             special_handling_map)
+
+                            # succeeded
+                            if ret_update != 0:
+                                panda_id = tmp_panda_id
+                                break
+                else:
+                    _logger.debug("getJobs : {0} -> do nothing".format(str_name))
+                    ret_update = 0
+                # release file lock
+                _logger.debug("getJobs : {0} -> unlock".format(str_name))
+                # succeeded
+                if ret_update != 0:
+                    break
+                # failed to UPDATE
+                if ret_update == 0:
+                    # reset pandaID
+                    panda_id = 0
+                _logger.debug("getJobs : Site {0} : retU {1} : PandaID {2} - {3}"
+                              .format(siteName,retU,pandaID,prodSourceLabel))
+                if panda_id == 0:
+                    break
+
+
+                # start transaction
+                self.conn.begin()
+                # select
+                var_map = {':PandaID': panda_id}
+                self.cur.arraysize = 10
+                sql_get_job_data = "SELECT %s FROM ATLAS_PANDA.jobsActive4 {0} WHERE PandaID=:PandaID".format(JobSpec.columnNames())
+                self.cur.execute(sql_get_job_data+comment, var_map)
+                res = self.cur.fetchone()
+                if len(res) == 0:
+                    # commit
+                    if not self._commit():
+                        raise RuntimeError, 'Commit error'
+                    break
+
+                # instantiate Job
+                job = JobSpec()
+                job.pack(res)
+                # read files
+
+                sql_file = """
+                           SELECT %s FROM ATLAS_PANDA.filesTable4 " % FileSpec.columnNames()
+                           WHERE PandaID=:PandaID
+                           """
+                var_map = {':PandaID': panda_id}
+                self.cur.arraysize = 10000
+                self.cur.execute(sql_file+comment, var_map)
+                res_files = self.cur.fetchall()
+                event_range_ids = {}
+                es_done_panda_ids = []
+                es_output_zip_map = {}
+                for res_file in res_files:
+                    file = FileSpec()
+                    file.pack(res_file)
+
+                    # add files except event service merge or jumbo
+                    if (not EventServiceUtils.isEventServiceMerge(job) and not EventServiceUtils.isJumboJob(job)) \
+                            or file.type in ['output','log']:
+                        job.addFile(file)
+                    # read input files for jumbo jobs
+                    elif EventServiceUtils.isJumboJob(job):
+                        # get files
+                        # read files from JEDI for jumbo jobs
+                        sql_file_JEDI = """
+                                         SELECT lfn,GUID,fsize,checksum
+                                         FROM {0}.JEDI_Dataset_Contents ".format(panda_config.schemaJEDI)
+                                         WHERE jediTaskID=:jediTaskID AND datasetID=:datasetID
+                                         ORDER BY lfn
+                                         """
+                        var_map = {':jediTaskID': file.jediTaskID, ':datasetID': file.datasetID}
+                        self.cur.execute(sql_file_JEDI+comment, var_map)
+                        res_files_JEDI = self.cur.fetchall()
+                        for tmp_LFN, tmp_GUID, tmp_file_size, tmp_checksum in res_files_JEDI:
+                            new_file_spec = FileSpec()
+                            new_file_spec.pack(res_file)
+                            new_file_spec.lfn = tmp_LFN
+                            new_file_spec.GUID = tmp_GUID
+                            new_file_spec.fsize = tmp_file_size
+                            new_file_spec.checksum = tmp_checksum
+                            job.addFile(new_file_spec)
+                        continue
+
+                    # construct input files from event ranges for event service merge
+                    if EventServiceUtils.isEventServiceMerge(job) and not file.type in ['output','log']:
+                            # get ranges
+                            var_map = {':jediTaskID': file.jediTaskID, ':datasetID': file.datasetID,
+                                       ':fileID': file.fileID, ':eventStatus': EventServiceUtils.ST_done
+                                       }
+                            sql_read_range = """
+                                SELECT /*+ INDEX_RS_ASC(tab JEDI_EVENTS_FILEID_IDX) NO_INDEX_FFS(tab JEDI_EVENTS_PK) NO_INDEX_SS(tab JEDI_EVENTS_PK) */
+                                PandaID,job_processID,attemptNr,objStore_ID
+                                FROM {0}.JEDI_Events tab ".format(panda_config.schemaJEDI)
+                                WHERE jediTaskID=:jediTaskID AND datasetID=:datasetID AND fileID=:fileID AND status=:eventStatus
+                                """
+                            self.cur.execute(sql_read_range+comment, var_map)
+                            res_read_range = self.cur.fetchall()
+                            for es_panda_id, job_process_id, attempt_nr, obj_store_id in res_read_range:
+                                tmp_event_range_id = self.makeEventRangeID(file.jediTaskID, es_panda_id, file.fileID,
+                                                                           job_process_id, attempt_nr)
+                                if not event_range_ids.has_key(file.fileID):
+                                    event_range_ids[file.fileID] = {}
+                                add_flag = False
+                                if not job_process_id in event_range_ids[file.fileID]:
+                                    add_flag= True
+                                else:
+                                    old_es_panda_id = add_flag[file.fileID][job_process_id]['pandaID']
+                                    if es_panda_id > old_es_panda_id:
+                                        add_flag= True
+                                        if old_es_panda_id in es_done_panda_ids:
+                                            es_done_panda_ids.remove(old_es_panda_id)
+                                if add_flag:
+                                    event_range_ids[file.fileID][job_process_id] = {'pandaID': es_panda_id,
+                                                                                    'eventRangeID': tmp_event_range_id,
+                                                                                    'objStoreID': obj_store_id}
+                                    if not es_panda_id in es_done_panda_ids:
+                                        es_done_panda_ids.append(es_panda_id)
+                                        # read log bucket IDs
+                                        sql_log_bucket_id = """
+                                            SELECT jobMetrics FROM ATLAS_PANDA.jobsArchived4 WHERE PandaID=:PandaID
+                                            UNION
+                                            SELECT jobMetrics FROM ATLAS_PANDAARCH.jobsArchived WHERE PandaID=:PandaID AND modificationTime>(CURRENT_DATE-30)
+                                            """
+                                        var_map = {':PandaID': es_panda_id}
+                                        self.cur.execute(sql_log_bucket_id + comment, var_map)
+                                        res_log_bucket = self.cur.fetchone()
+                                        if res_log_bucket != None and res_log_bucket[0] != None:
+                                            output_zip_bucket_id = None
+                                            tmp_patch = re.search('outputZipBucketID=(\d+)',res_log_bucket[0])
+                                            if tmp_patch != None:
+                                                output_zip_bucket_id = tmp_patch.group(1)
+                                            output_zip_name = None
+                                            tmp_patch = re.search('outputZipName=([^ ]+)',res_log_bucket[0])
+                                            if tmp_patch != None:
+                                                output_zip_name = tmp_patch.group(1)
+                                            if output_zip_bucket_id != None and output_zip_name != None:
+                                                es_output_zip_map[es_panda_id] = {'name': output_zip_name,
+                                                                                  'osid': output_zip_bucket_id}
+
+                # make input for event service output merging
+                merge_io_map = {}
+                merge_input_files = []
+                merge_file_os_map = {}
+                merge_zip_panda_ids = []
+                for tmp_file_id, tmp_map_event_range_id in event_range_ids.iteritems():
+                    job_pids = tmp_map_event_range_id.keys()
+                    job_pids.sort()
+                    # make input
+                    for job_pid in job_pids:
+                        for tmp_file_spec in job.Files:
+                            if not tmp_file_spec.type in ['output']:
+                                continue
+                            tmp_input_file_spec = copy.copy(tmp_file_spec)
+                            tmp_input_file_spec.type = 'input'
+                            # change attemptNr back to the original, which could have been changed by ES merge retry
+                            origLFN = re.sub('\.\d+$', '.1', tmp_input_file_spec.lfn)
+                            # append eventRangeID as suffix
+                            tmp_input_file_spec.lfn = origLFN + '.' + tmp_map_event_range_id[job_pid]['eventRangeID']
+                            es_panda_id = tmp_map_event_range_id[job_pid]['pandaID']
+                            # make input/output map
+                            if not merge_io_map.has_key(origLFN):
+                                merge_io_map[origLFN] = []
+                            merge_io_map[origLFN].append(tmpInputFileSpec.lfn)
+                            # add file
+                            if not es_panda_id in es_output_zip_map:
+                                # no zip
+                                mergeInputFiles.append(tmpInputFileSpec)
+                                # mapping for ObjStore
+                                mergeFileObjStoreMap[tmpInputFileSpec.lfn] = \
+                                tmpMapEventRangeID[jobProcessID]['objStoreID']
+                            elif not es_panda_id in mergeZipPandaIDs:
+                                # first zip
+                                mergeZipPandaIDs.append(esPandaID)
+                                tmpInputFileSpec.lfn = 'zip://' + \
+                                                       es_output_zip_map[esPandaID]['name']
+                                mergeInputFiles.append(tmpInputFileSpec)
+                                # mapping for ObjStore
+                                mergeFileObjStoreMap[tmpInputFileSpec.lfn] = \
+                                    es_output_zip_map[esPandaID]['osid']
+
+                for tmpInputFileSpec in mergeInputFiles:
+                    job.addFile(tmpInputFileSpec)
+                # job parameters
+                sqlJobP = "SELECT jobParameters FROM ATLAS_PANDA.jobParamsTable WHERE PandaID=:PandaID"
+                varMap = {}
+                varMap[':PandaID'] = job.PandaID
+                self.cur.execute(sqlJobP + comment, varMap)
+                for clobJobP, in self.cur:
+                    try:
+                        job.jobParameters = clobJobP.read()
+                    except AttributeError:
+                        job.jobParameters = str(clobJobP)
+                    break
+                # remove or extract parameters for merge
+                if EventServiceUtils.isEventServiceJob(job):
+                    try:
+                        job.jobParameters = re.sub(
+                            '<PANDA_ESMERGE_.+>.*</PANDA_ESMERGE_.+>', '',
+                            job.jobParameters)
+                    except:
+                        pass
+                    # sort files since file order is important for positional event number
+                    job.sortFiles()
+                elif EventServiceUtils.isEventServiceMerge(job):
+                    try:
+                        origJobParameters = job.jobParameters
+                        tmpMatch = re.search(
+                            '<PANDA_ESMERGE_JOBP>(.*)</PANDA_ESMERGE_JOBP>',
+                            origJobParameters)
+                        job.jobParameters = tmpMatch.group(1)
+                        tmpMatch = re.search(
+                            '<PANDA_ESMERGE_TRF>(.*)</PANDA_ESMERGE_TRF>',
+                            origJobParameters)
+                        job.transformation = tmpMatch.group(1)
+                    except:
+                        pass
+                    # pass in/out map for merging via metadata
+                    job.metadata = mergeInputOutputMap, mergeFileObjStoreMap
+                # commit
+                if not self._commit():
+                    raise RuntimeError, 'Commit error'
+                # overwrite processingType for appdir at aggrigates sites
+                if aggSiteMap.has_key(siteName):
+                    if aggSiteMap[siteName].has_key(job.computingSite):
+                        job.processingType = aggSiteMap[siteName][job.computingSite]
+                        job.computingSite = job.computingSite
+                # append
+                retJobs.append(job)
+                # record status change
+                try:
+                    self.recordStatusChange(job.PandaID, job.jobStatus, jobInfo=job)
+                except:
+                    _logger.error('recordStatusChange in getJobs')
+            return retJobs, nSent
+        except:
+        errtype, errvalue = sys.exc_info()[:2]
+        errStr = "getJobs : %s %s" % (errtype, errvalue)
+        errStr.strip()
+        errStr += traceback.format_exc()
+        _logger.error(errStr)
+        # roll back
+        self._rollback()
+        return [], 0
 
     # reset job in jobsActive or jobsWaiting
     def resetJob(self,pandaID,activeTable=True,keepSite=False,getOldSubs=False,forPending=True):
