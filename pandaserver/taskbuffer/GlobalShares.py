@@ -5,6 +5,12 @@ from config import panda_config
 from pandalogger.PandaLogger import PandaLogger
 _logger = PandaLogger().getLogger('TaskBuffer')
 
+# Definitions
+EXECUTING = 'executing'
+QUEUED = 'queued'
+PLEDGED = 'pledged'
+IGNORE = 'ignore'
+
 class Node(object):
 
     def __init__(self):
@@ -85,6 +91,84 @@ class Share(Node):
 
         return
 
+    def sort_branch_by_current_hs_distribution(self, hs_distribution):
+        """
+        Receives the current hs_distribution and runs down the branch in order of under-pledging.
+        It returns a list of sorted leave shares
+        """
+        sorted_shares = []
+
+        # If the node has no leaves, return the node in a list
+        if not self.children:
+            sorted_shares = [self]
+            return sorted_shares
+
+        # If the node has leaves, sort the children
+        children_sorted = []
+        for child1 in self.children:
+            loop_index = 0
+            insert_index = None
+            # Calculate under-pledging
+            child1_under_pledge = hs_distribution[child1.name][PLEDGED] - hs_distribution[child1.name][EXECUTING]
+            for child2 in children_sorted:
+                try:
+                    # Calculate under-pledging
+                    child2_under_pledge = hs_distribution[child2.name][PLEDGED] - hs_distribution[child2.name][EXECUTING]
+                except KeyError:
+                    continue
+
+                if child1_under_pledge > child2_under_pledge:
+                    insert_index = loop_index
+
+                loop_index += 1
+
+            # Insert the child into the list
+            children_sorted.insert(insert_index, child1)
+
+        # Go recursively and sort the grand* children
+        for child in children_sorted:
+            sorted_shares.append(child.sort_branch_by_current_hs_distribution(hs_distribution))
+
+        return sorted_shares
+
+
+    def aggregate_hs_distribution(self, hs_distribution):
+        """
+        We have the current HS distribution values for the leaves, but want to propagate it updwards to the parents.
+        We will traverse the tree from top to bottom and bring up the aggregated values.
+        """
+        executing, queued, pledged = 0, 0, 0
+
+        # If the node has no children, it's a leave and should have an entry in the hs_distribution
+        if not self.children:
+            try:
+                executing = hs_distribution[self.name][EXECUTING]
+                queued = hs_distribution[self.name][QUEUED]
+                pledged = hs_distribution[self.name][PLEDGED]
+            except KeyError:
+                pass
+
+            return executing, queued, pledged
+
+        # If the node has children, sum up the values of the children
+        executing = 0
+        queued = 0
+        pledged = 0
+
+        for child in self.children:
+            executing_child, queued_child, pledged_child = child.aggregate_hs_distribution(hs_distribution)
+            executing += executing_child
+            queued += queued_child
+            pledged += pledged_child
+
+        # Add the aggregated value to the map
+        hs_distribution[self.name][EXECUTING] = executing
+        hs_distribution[self.name][QUEUED] = queued
+        hs_distribution[self.name][PLEDGED] = pledged
+
+        # Return the aggregated values
+        return executing, queued, pledged
+
 
 class GlobalShares:
     """
@@ -131,6 +215,7 @@ class GlobalShares:
             node.children.append(self.__load_branch(child))
 
         return node
+
 
     def compare_share_task(self, share, task):
         """
@@ -181,8 +266,68 @@ class GlobalShares:
         # Share not found
         return False
 
+
 # Singleton
 GlobalShares = GlobalShares()
+
+
+def get_hs_distribution():
+    from taskbuffer import TaskBuffer
+    import cx_Oracle
+    from config import panda_config
+
+    dbhost = panda_config.dbhost
+    dbpasswd = panda_config.dbpasswd
+    dbuser = panda_config.dbuser
+    conn = cx_Oracle.connect(dsn=dbhost, user=dbuser, password=dbpasswd, threaded=True)
+    from taskbuffer.WrappedCursor import WrappedCursor
+
+    sql_hs_distribution = """
+        SELECT gshare, jobstatus_grouped, SUM(HS)
+        FROM
+            (SELECT gshare, HS,
+                 CASE
+                     WHEN jobstatus IN('activated') THEN QUEUED
+                     WHEN jobstatus IN('sent', 'starting', 'running', 'holding') THEN EXECUTING
+                     ELSE IGNORE
+                 END jobstatus_grouped
+             FROM ATLAS_PANDA.JOBS_SHARE_STATS JSS)
+        GROUP BY gshare, jobstatus_grouped
+        """
+
+    cur = WrappedCursor(conn)
+    cur.execute(sql_hs_distribution, varMap)
+    hs_distribution_raw = cur.fetchall()
+
+    # get the hs distribution data into a dictionary structure
+    hs_distribution_dict = {}
+    hs_queued_total = 0
+    hs_executing_total = 0
+    hs_ignore_total = 0
+    for hs_entry in hs_distribution_raw:
+        gshare, status_group, hs = hs_entry
+        hs_distribution_dict.set_default(gshare, {})
+        hs_distribution_dict[gshare][status_group] = hs
+        # calculate totals
+        if status_group == QUEUED:
+            hs_queued_total += hs
+        elif status_group == EXECUTING:
+            hs_executing_total += hs
+        else:
+            hs_ignore_total += hs
+
+    # Calculate the ideal HS06 distribution based on shares.
+    global_shares = GlobalShares
+    for share_node in global_shares.leave_shares:
+        share_name, share_value = share_node.name, share_node.value
+        hs_pledged_share = hs_executing_total * share_value
+
+        hs_distribution_dict.set_default(gshare, {})
+        # Pledged HS according to global share definitions
+        hs_distribution_dict[share_name]['pledged'] = hs_pledged_share
+
+    return hs_distribution_dict
+
 
 if __name__ == "__main__":
     """
@@ -205,6 +350,12 @@ if __name__ == "__main__":
     # create a fake tasks with relevant fields and retrieve its share
     from pandajedi.jedicore.JediTaskSpec import JediTaskSpec
     task_spec = JediTaskSpec()
+
+    # test the aggregate_hs_distribution and sort_branch_by_current_hs_distribution functions
+    hs_distribution = get_hs_distribution()
+    print global_shares.tree.sort_branch_by_current_hs_distribution(hs_distribution)
+    print global_shares.tree.aggregate_hs_distribution(hs_distribution)
+
 
     # Analysis task
     task_spec.prodSourceLabel = 'user'
