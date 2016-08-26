@@ -9529,9 +9529,9 @@ class DBProxy:
                 FROM
                     (SELECT gshare, HS,
                          CASE
-                             WHEN jobstatus IN('activated') THEN QUEUED
-                             WHEN jobstatus IN('sent', 'starting', 'running', 'holding') THEN EXECUTING
-                             ELSE IGNORE
+                             WHEN jobstatus IN('activated') THEN 'queued'
+                             WHEN jobstatus IN('sent', 'starting', 'running', 'holding') THEN 'executing'
+                             ELSE 'ignore'
                          END jobstatus_grouped
                      FROM ATLAS_PANDA.JOBS_SHARE_STATS JSS)
                 GROUP BY gshare, jobstatus_grouped
@@ -9547,7 +9547,7 @@ class DBProxy:
             hs_ignore_total = 0
             for hs_entry in hs_distribution_raw:
                 gshare, status_group, hs = hs_entry
-                hs_distribution_dict.set_default(gshare, {})
+                hs_distribution_dict.setdefault(gshare, {})
                 hs_distribution_dict[gshare][status_group] = hs
                 # calculate totals
                 if status_group == QUEUED:
@@ -9563,7 +9563,7 @@ class DBProxy:
                 share_name, share_value = share_node.name, share_node.value
                 hs_pledged_share = hs_executing_total * share_value
 
-                hs_distribution_dict.set_default(gshare, {})
+                hs_distribution_dict.setdefault(share_name, {'executing': 0, 'queued': 0})
                 # Pledged HS according to global share definitions
                 hs_distribution_dict[share_name]['pledged'] = hs_pledged_share
 

@@ -11,6 +11,7 @@ QUEUED = 'queued'
 PLEDGED = 'pledged'
 IGNORE = 'ignore'
 
+
 class Node(object):
 
     def __init__(self):
@@ -107,18 +108,21 @@ class Share(Node):
         children_sorted = []
         for child1 in self.children:
             loop_index = 0
-            insert_index = None
+            insert_index = len(children_sorted)  # insert at the end, if not deemed otherwise
+
             # Calculate under-pledging
             child1_under_pledge = hs_distribution[child1.name][PLEDGED] - hs_distribution[child1.name][EXECUTING]
             for child2 in children_sorted:
                 try:
                     # Calculate under-pledging
-                    child2_under_pledge = hs_distribution[child2.name][PLEDGED] - hs_distribution[child2.name][EXECUTING]
+                    child2_under_pledge = hs_distribution[child2.name][PLEDGED] \
+                                          - hs_distribution[child2.name][EXECUTING]
                 except KeyError:
                     continue
 
                 if child1_under_pledge > child2_under_pledge:
                     insert_index = loop_index
+                    break
 
                 loop_index += 1
 
@@ -127,10 +131,9 @@ class Share(Node):
 
         # Go recursively and sort the grand* children
         for child in children_sorted:
-            sorted_shares.append(child.sort_branch_by_current_hs_distribution(hs_distribution))
+            sorted_shares.extend(child.sort_branch_by_current_hs_distribution(hs_distribution))
 
         return sorted_shares
-
 
     def aggregate_hs_distribution(self, hs_distribution):
         """
@@ -162,9 +165,11 @@ class Share(Node):
             pledged += pledged_child
 
         # Add the aggregated value to the map
-        hs_distribution[self.name][EXECUTING] = executing
-        hs_distribution[self.name][QUEUED] = queued
-        hs_distribution[self.name][PLEDGED] = pledged
+        hs_distribution[self.name] = {
+                                       EXECUTING: executing,
+                                       QUEUED: queued,
+                                       PLEDGED: pledged
+                                     }
 
         # Return the aggregated values
         return executing, queued, pledged
@@ -198,7 +203,6 @@ class GlobalShares:
         # get the leave shares (the ones not having more children)
         self.leave_shares = self.tree.get_leaves()
 
-
     def __load_branch(self, share):
         """
         Recursively load a branch
@@ -215,7 +219,6 @@ class GlobalShares:
             node.children.append(self.__load_branch(child))
 
         return node
-
 
     def compare_share_task(self, share, task):
         """
@@ -248,9 +251,9 @@ class GlobalShares:
                 selected_share_name = share.name
                 break
 
-        if selected_share_name=='Undefined':
+        if selected_share_name == 'Undefined':
             _logger.warning("No share matching jediTaskId={0} (prodSourceLabel={1} workingGroup={2} campaign={3} )".
-                                  format(task.jediTaskID, task.prodSourceLabel, task.workingGroup, task.campaign))
+                            format(task.jediTaskID, task.prodSourceLabel, task.workingGroup, task.campaign))
 
         return selected_share_name
 
@@ -287,16 +290,16 @@ def get_hs_distribution():
         FROM
             (SELECT gshare, HS,
                  CASE
-                     WHEN jobstatus IN('activated') THEN QUEUED
-                     WHEN jobstatus IN('sent', 'starting', 'running', 'holding') THEN EXECUTING
-                     ELSE IGNORE
+                     WHEN jobstatus IN('activated') THEN 'queued'
+                     WHEN jobstatus IN('sent', 'starting', 'running', 'holding') THEN 'executing'
+                     ELSE 'ignore'
                  END jobstatus_grouped
              FROM ATLAS_PANDA.JOBS_SHARE_STATS JSS)
         GROUP BY gshare, jobstatus_grouped
         """
 
     cur = WrappedCursor(conn)
-    cur.execute(sql_hs_distribution, varMap)
+    cur.execute(sql_hs_distribution)
     hs_distribution_raw = cur.fetchall()
 
     # get the hs distribution data into a dictionary structure
@@ -306,7 +309,7 @@ def get_hs_distribution():
     hs_ignore_total = 0
     for hs_entry in hs_distribution_raw:
         gshare, status_group, hs = hs_entry
-        hs_distribution_dict.set_default(gshare, {})
+        hs_distribution_dict.setdefault(gshare, {PLEDGED: 0, QUEUED: 0, EXECUTING: 0})
         hs_distribution_dict[gshare][status_group] = hs
         # calculate totals
         if status_group == QUEUED:
@@ -320,9 +323,9 @@ def get_hs_distribution():
     global_shares = GlobalShares
     for share_node in global_shares.leave_shares:
         share_name, share_value = share_node.name, share_node.value
-        hs_pledged_share = hs_executing_total * share_value
+        hs_pledged_share = hs_executing_total * share_value / 100.0
 
-        hs_distribution_dict.set_default(gshare, {})
+        hs_distribution_dict.setdefault(share_name, {PLEDGED: 0, QUEUED: 0, EXECUTING: 0})
         # Pledged HS according to global share definitions
         hs_distribution_dict[share_name]['pledged'] = hs_pledged_share
 
@@ -353,9 +356,10 @@ if __name__ == "__main__":
 
     # test the aggregate_hs_distribution and sort_branch_by_current_hs_distribution functions
     hs_distribution = get_hs_distribution()
+    print hs_distribution
+    global_shares.tree.aggregate_hs_distribution(hs_distribution)
+    print hs_distribution
     print global_shares.tree.sort_branch_by_current_hs_distribution(hs_distribution)
-    print global_shares.tree.aggregate_hs_distribution(hs_distribution)
-
 
     # Analysis task
     task_spec.prodSourceLabel = 'user'
@@ -440,3 +444,35 @@ if __name__ == "__main__":
     task_spec.workingGroup = 'GP_PHYS'
     task_spec.processingType = 'dummy_type'
     print("Share for task is {0}(should be 'Data Derivations')".format(global_shares.get_share_for_task(task_spec)))
+
+
+
+'processing': {'executing': 0, 'pledged': 193771.38157894733, 'queued': 0},
+'Upgrade': {'executing': 0, 'pledged': 38754.276315789473, 'queued': 0},
+'Data Derivations': {'ignore': 43730, 'executing': 420110, 'pledged': 135639.96710526315, 'queued': 799950},
+'HLT Reprocessing': {'ignore': 4550, 'executing': 22890, 'pledged': 77508.552631578947, 'queued': 66220},
+'Event Index': {'executing': 0, 'pledged': 7750.8552631578941, 'queued': 0},
+'MC Derivations': {'executing': 0, 'pledged': 58131.414473684206, 'queued': 0},
+'Analysis': {'ignore': 538220, 'executing': 30560, 'pledged': 157084.0, 'queued': 1223240},
+'Production': {'executing': 754860, 'pledged': 589065.0, 'queued': 1298870},
+'Heavy Ion': {'executing': 0, 'pledged': 193771.38157894733, 'queued': 0},
+'Test': {'executing': 0, 'pledged': 39271.0, 'queued': 2400},
+'Group production': {'ignore': 95400, 'executing': 311860, 'pledged': 38754.276315789473, 'queued': 432700},
+'Validation': {'executing': 0, 'pledged': 38754.276315789473, 'queued': 0},
+'root': {'executing': 785420, 'pledged': 785420.0, 'queued': 2524510},
+'Derivations': {'executing': 420110, 'pledged': 193771.38157894736, 'queued': 799950}}
+
+name: root, value: 100.0
+       	 name: Analysis, value: 20.0
+       	 name: Production, value: 75.0
+       		 name: Derivations, value: 24.6710526316
+       			 name: MC Derivations, value: 7.40131578947
+       			 name: Data Derivations, value: 17.2697368421
+       		 name: Reprocessing, value: 24.6710526316
+       			 name: Heavy Ion, value: 24.6710526316
+       		 name: Group production, value: 4.93421052632
+       		 name: Upgrade, value: 4.93421052632
+       		 name: HLT Reprocessing, value: 9.86842105263
+       		 name: Validation, value: 4.93421052632
+       		 name: Event Index, value: 0.986842105263
+       	 name: Test, value: 5.0
