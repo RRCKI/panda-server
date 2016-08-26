@@ -446,33 +446,3 @@ if __name__ == "__main__":
     print("Share for task is {0}(should be 'Data Derivations')".format(global_shares.get_share_for_task(task_spec)))
 
 
-
-'processing': {'executing': 0, 'pledged': 193771.38157894733, 'queued': 0},
-'Upgrade': {'executing': 0, 'pledged': 38754.276315789473, 'queued': 0},
-'Data Derivations': {'ignore': 43730, 'executing': 420110, 'pledged': 135639.96710526315, 'queued': 799950},
-'HLT Reprocessing': {'ignore': 4550, 'executing': 22890, 'pledged': 77508.552631578947, 'queued': 66220},
-'Event Index': {'executing': 0, 'pledged': 7750.8552631578941, 'queued': 0},
-'MC Derivations': {'executing': 0, 'pledged': 58131.414473684206, 'queued': 0},
-'Analysis': {'ignore': 538220, 'executing': 30560, 'pledged': 157084.0, 'queued': 1223240},
-'Production': {'executing': 754860, 'pledged': 589065.0, 'queued': 1298870},
-'Heavy Ion': {'executing': 0, 'pledged': 193771.38157894733, 'queued': 0},
-'Test': {'executing': 0, 'pledged': 39271.0, 'queued': 2400},
-'Group production': {'ignore': 95400, 'executing': 311860, 'pledged': 38754.276315789473, 'queued': 432700},
-'Validation': {'executing': 0, 'pledged': 38754.276315789473, 'queued': 0},
-'root': {'executing': 785420, 'pledged': 785420.0, 'queued': 2524510},
-'Derivations': {'executing': 420110, 'pledged': 193771.38157894736, 'queued': 799950}}
-
-name: root, value: 100.0
-       	 name: Analysis, value: 20.0
-       	 name: Production, value: 75.0
-       		 name: Derivations, value: 24.6710526316
-       			 name: MC Derivations, value: 7.40131578947
-       			 name: Data Derivations, value: 17.2697368421
-       		 name: Reprocessing, value: 24.6710526316
-       			 name: Heavy Ion, value: 24.6710526316
-       		 name: Group production, value: 4.93421052632
-       		 name: Upgrade, value: 4.93421052632
-       		 name: HLT Reprocessing, value: 9.86842105263
-       		 name: Validation, value: 4.93421052632
-       		 name: Event Index, value: 0.986842105263
-       	 name: Test, value: 5.0
