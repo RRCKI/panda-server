@@ -1,15 +1,21 @@
 import re
 
-from taskbuffer.TaskBuffer import taskBuffer
 from config import panda_config
 from pandalogger.PandaLogger import PandaLogger
-_logger = PandaLogger().getLogger('TaskBuffer')
+_logger = PandaLogger().getLogger('GlobalShares')
 
 # Definitions
 EXECUTING = 'executing'
 QUEUED = 'queued'
 PLEDGED = 'pledged'
 IGNORE = 'ignore'
+
+class Singleton(object):
+  _instance = None
+  def __new__(class_, *args, **kwargs):
+    if not isinstance(class_._instance, class_):
+        class_._instance = object.__new__(class_, *args, **kwargs)
+    return class_._instance
 
 
 class Node(object):
@@ -175,14 +181,15 @@ class Share(Node):
         return executing, queued, pledged
 
 
-class GlobalShares:
+class GlobalShares(Singleton):
     """
     Class to manage the tree of shares
     """
 
-    def __init__(self):
+    def __init__(self, top_shares):
 
         # Initialize DB connection
+        from taskbuffer.TaskBuffer import taskBuffer
         taskBuffer.init(panda_config.dbhost, panda_config.dbpasswd, nDBConnection=1)
         self.__task_buffer = taskBuffer
 
@@ -270,10 +277,6 @@ class GlobalShares:
         return False
 
 
-# Singleton
-GlobalShares = GlobalShares()
-
-
 def get_hs_distribution():
     from taskbuffer import TaskBuffer
     import cx_Oracle
@@ -320,7 +323,7 @@ def get_hs_distribution():
             hs_ignore_total += hs
 
     # Calculate the ideal HS06 distribution based on shares.
-    global_shares = GlobalShares
+    global_shares = GlobalShares()
     for share_node in global_shares.leave_shares:
         share_name, share_value = share_node.name, share_node.value
         hs_pledged_share = hs_executing_total * share_value / 100.0
@@ -336,7 +339,7 @@ if __name__ == "__main__":
     """
     Functional testing of the shares tree
     """
-    global_shares = GlobalShares
+    global_shares = GlobalShares()
 
     # print the global share structure
     print(global_shares.tree)
@@ -444,5 +447,3 @@ if __name__ == "__main__":
     task_spec.workingGroup = 'GP_PHYS'
     task_spec.processingType = 'dummy_type'
     print("Share for task is {0}(should be 'Data Derivations')".format(global_shares.get_share_for_task(task_spec)))
-
-
