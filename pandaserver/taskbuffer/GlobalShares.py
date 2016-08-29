@@ -186,7 +186,7 @@ class GlobalShares(Singleton):
     Class to manage the tree of shares
     """
 
-    def __init__(self, top_shares):
+    def __init__(self):
 
         # Initialize DB connection
         from taskbuffer.TaskBuffer import taskBuffer
