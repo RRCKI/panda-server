@@ -10,12 +10,19 @@ QUEUED = 'queued'
 PLEDGED = 'pledged'
 IGNORE = 'ignore'
 
-class Singleton(object):
-  _instance = None
-  def __new__(class_, *args, **kwargs):
-    if not isinstance(class_._instance, class_):
-        class_._instance = object.__new__(class_, *args, **kwargs)
-    return class_._instance
+
+class Singleton(type):
+    """
+    Meta class singleton implementation, as described here:
+    https://stackoverflow.com/questions/6760685/creating-a-singleton-in-python
+    """
+    _instances = {}
+
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
+
+        return cls._instances[cls]
 
 
 class Node(object):
@@ -100,8 +107,7 @@ class Share(Node):
 
     def sort_branch_by_current_hs_distribution(self, hs_distribution):
         """
-        Receives the current hs_distribution and runs down the branch in order of under-pledging.
-        It returns a list of sorted leave shares
+        Runs down the branch in order of under-pledging. It returns a list of sorted leave shares
         """
         sorted_shares = []
 
@@ -181,10 +187,11 @@ class Share(Node):
         return executing, queued, pledged
 
 
-class GlobalShares(Singleton):
+class GlobalShares:
     """
     Class to manage the tree of shares
     """
+    __metaclass__ = Singleton
 
     def __init__(self):
 
@@ -209,6 +216,25 @@ class GlobalShares(Singleton):
 
         # get the leave shares (the ones not having more children)
         self.leave_shares = self.tree.get_leaves()
+
+        # get the distribution of shares
+        self.reload_hs_distribution()
+
+    def get_sorted_leaves(self, refresh=True):
+        """
+        Optionally re-loads the HS06 distribution, then returns the leaves sorted by under usage
+        """
+        if refresh:
+            self.reload_hs_distribution()
+
+        return self.tree.sort_branch_by_current_hs_distribution(self.__hs_distribution)
+
+    def reload_hs_distribution(self):
+        """
+        Retrieve the current HS06 distribution of jobs from the database and then aggregate recursively up to the root
+        """
+        self.__hs_distribution = self.__get_hs_leave_distribution()
+        self.tree.aggregate_hs_distribution(self.__hs_distribution)
 
     def __load_branch(self, share):
         """
@@ -276,76 +302,75 @@ class GlobalShares(Singleton):
         # Share not found
         return False
 
+    # get the current HS06 distribution for running and queued jobs
+    def __get_hs_leave_distribution(self):
+        comment = ' /* DBProxy.get_hs_leave_distribution */'
 
-def get_hs_distribution():
-    from taskbuffer import TaskBuffer
-    import cx_Oracle
-    from config import panda_config
+        sql_hs_distribution = """
+            SELECT gshare, jobstatus_grouped, SUM(HS)
+            FROM
+                (SELECT gshare, HS,
+                     CASE
+                         WHEN jobstatus IN('activated') THEN 'queued'
+                         WHEN jobstatus IN('sent', 'starting', 'running', 'holding') THEN 'executing'
+                         ELSE 'ignore'
+                     END jobstatus_grouped
+                 FROM ATLAS_PANDA.JOBS_SHARE_STATS JSS)
+            GROUP BY gshare, jobstatus_grouped
+            """
 
-    dbhost = panda_config.dbhost
-    dbpasswd = panda_config.dbpasswd
-    dbuser = panda_config.dbuser
-    conn = cx_Oracle.connect(dsn=dbhost, user=dbuser, password=dbpasswd, threaded=True)
-    from taskbuffer.WrappedCursor import WrappedCursor
+        proxy = self.__task_buffer.proxyPool.getProxy()
+        hs_distribution_raw = proxy.querySQL(sql_hs_distribution + comment)
+        self.__task_buffer.proxyPool.putProxy(proxy)
 
-    sql_hs_distribution = """
-        SELECT gshare, jobstatus_grouped, SUM(HS)
-        FROM
-            (SELECT gshare, HS,
-                 CASE
-                     WHEN jobstatus IN('activated') THEN 'queued'
-                     WHEN jobstatus IN('sent', 'starting', 'running', 'holding') THEN 'executing'
-                     ELSE 'ignore'
-                 END jobstatus_grouped
-             FROM ATLAS_PANDA.JOBS_SHARE_STATS JSS)
-        GROUP BY gshare, jobstatus_grouped
-        """
+        # get the hs distribution data into a dictionary structure
+        hs_distribution_dict = {}
+        hs_queued_total = 0
+        hs_executing_total = 0
+        hs_ignore_total = 0
+        for hs_entry in hs_distribution_raw:
+            gshare, status_group, hs = hs_entry
+            hs_distribution_dict.setdefault(gshare, {PLEDGED: 0, QUEUED: 0, EXECUTING: 0})
+            hs_distribution_dict[gshare][status_group] = hs
+            # calculate totals
+            if status_group == QUEUED:
+                hs_queued_total += hs
+            elif status_group == EXECUTING:
+                hs_executing_total += hs
+            else:
+                hs_ignore_total += hs
 
-    cur = WrappedCursor(conn)
-    cur.execute(sql_hs_distribution)
-    hs_distribution_raw = cur.fetchall()
+        # Calculate the ideal HS06 distribution based on shares.
+        for share_node in self.leave_shares:
+            share_name, share_value = share_node.name, share_node.value
+            hs_pledged_share = hs_executing_total * share_value / 100.0
 
-    # get the hs distribution data into a dictionary structure
-    hs_distribution_dict = {}
-    hs_queued_total = 0
-    hs_executing_total = 0
-    hs_ignore_total = 0
-    for hs_entry in hs_distribution_raw:
-        gshare, status_group, hs = hs_entry
-        hs_distribution_dict.setdefault(gshare, {PLEDGED: 0, QUEUED: 0, EXECUTING: 0})
-        hs_distribution_dict[gshare][status_group] = hs
-        # calculate totals
-        if status_group == QUEUED:
-            hs_queued_total += hs
-        elif status_group == EXECUTING:
-            hs_executing_total += hs
-        else:
-            hs_ignore_total += hs
+            hs_distribution_dict.setdefault(share_name, {PLEDGED: 0, QUEUED: 0, EXECUTING: 0})
+            # Pledged HS according to global share definitions
+            hs_distribution_dict[share_name]['pledged'] = hs_pledged_share
 
-    # Calculate the ideal HS06 distribution based on shares.
-    global_shares = GlobalShares()
-    for share_node in global_shares.leave_shares:
-        share_name, share_value = share_node.name, share_node.value
-        hs_pledged_share = hs_executing_total * share_value / 100.0
-
-        hs_distribution_dict.setdefault(share_name, {PLEDGED: 0, QUEUED: 0, EXECUTING: 0})
-        # Pledged HS according to global share definitions
-        hs_distribution_dict[share_name]['pledged'] = hs_pledged_share
-
-    return hs_distribution_dict
+        return hs_distribution_dict
 
 
 if __name__ == "__main__":
     """
     Functional testing of the shares tree
     """
+    print 'main1'
     global_shares = GlobalShares()
+    print 'main2'
 
     # print the global share structure
+    print ('--------------GLOBAL SHARES TREE---------------')
     print(global_shares.tree)
 
     # print the normalized leaves, which will be the actual applied shares
+    print ('--------------LEAVE SHARES---------------')
     print(global_shares.leave_shares)
+
+    # print the shares in order of under usage
+    print ('--------------LEAVE SHARES SORTED BY UNDER-PLEDGING---------------')
+    print global_shares.get_sorted_leaves()
 
     # check a couple of shares if they are valid leave names
     share_name = 'wrong_share'
@@ -356,13 +381,6 @@ if __name__ == "__main__":
     # create a fake tasks with relevant fields and retrieve its share
     from pandajedi.jedicore.JediTaskSpec import JediTaskSpec
     task_spec = JediTaskSpec()
-
-    # test the aggregate_hs_distribution and sort_branch_by_current_hs_distribution functions
-    hs_distribution = get_hs_distribution()
-    print hs_distribution
-    global_shares.tree.aggregate_hs_distribution(hs_distribution)
-    print hs_distribution
-    print global_shares.tree.sort_branch_by_current_hs_distribution(hs_distribution)
 
     # Analysis task
     task_spec.prodSourceLabel = 'user'

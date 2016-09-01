@@ -696,8 +696,8 @@ class TaskBuffer:
         # release proxy
         self.proxyPool.putProxy(proxy)
         return retStr
-        
-    
+
+
     # get jobs
     def getJobs(self,nJobs,siteName,prodSourceLabel,cpu,mem,diskSpace,node,timeout,computingElement,
                 atlasRelease,prodUserID,getProxyKey,countryGroup,workingGroup,allowOtherCountry,
@@ -3094,6 +3094,17 @@ class TaskBuffer:
         # return
         return res
 
+
+    # get the HS06 distribution for global shares
+    def get_hs_distribution(self):
+        # get DB proxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        res = proxy.get_hs_distribution()
+        # release DB proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return res
 
 
 # Singleton

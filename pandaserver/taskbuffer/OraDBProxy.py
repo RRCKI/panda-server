@@ -9516,74 +9516,28 @@ class DBProxy:
             self._rollback()
             return
 
+
+
     # get selection criteria for share of production activities
-    def getCriteriaForGlobalShare(self, site_name, agg_sites=[]):
+    def getCriteriaForGlobalShares(self, site_name, agg_sites=[]):
         comment = ' /* DBProxy.getCriteriaForGlobalShare */'
         # return for no criteria
         ret_empty = '', {}
 
         try:
-            # Get current HS06 distribution for running and activated jobs
-            sql_hs_distribution = """
-                SELECT gshare, jobstatus_grouped, SUM(HS)
-                FROM
-                    (SELECT gshare, HS,
-                         CASE
-                             WHEN jobstatus IN('activated') THEN 'queued'
-                             WHEN jobstatus IN('sent', 'starting', 'running', 'holding') THEN 'executing'
-                             ELSE 'ignore'
-                         END jobstatus_grouped
-                     FROM ATLAS_PANDA.JOBS_SHARE_STATS JSS)
-                GROUP BY gshare, jobstatus_grouped
-                """
 
-            self.cur.execute(sql_hs_distribution+comment)
-            hs_distribution_raw = self.cur.fetchall()
-
-            # get the hs distribution data into a dictionary structure
-            hs_distribution_dict = {}
-            hs_queued_total = 0
-            hs_executing_total = 0
-            hs_ignore_total = 0
-            for hs_entry in hs_distribution_raw:
-                gshare, status_group, hs = hs_entry
-                hs_distribution_dict.setdefault(gshare, {})
-                hs_distribution_dict[gshare][status_group] = hs
-                # calculate totals
-                if status_group == QUEUED:
-                    hs_queued_total += hs
-                elif status_group == EXECUTING:
-                    hs_executing_total += hs
-                else:
-                    hs_ignore_total += hs
-
-            # Calculate the ideal HS06 distribution based on shares.
-            global_shares = GlobalShares
-            for share_node in global_shares.leave_shares:
-                share_name, share_value = share_node.name, share_node.value
-                hs_pledged_share = hs_executing_total * share_value
-
-                hs_distribution_dict.setdefault(share_name, {'executing': 0, 'queued': 0})
-                # Pledged HS according to global share definitions
-                hs_distribution_dict[share_name]['pledged'] = hs_pledged_share
-
-            # Sum up the shares to the root
-
-            # If there are shares without queued jobs, then distribute between siblings
-            # hs_distribution_dict[share_name][PLEDGED] = hs_pledged_share
-            # ACTUALLY BETTER TO
-
+            global_shares = GlobalShares()
+            sorted_leaves = global_shares.get_sorted_leaves()
 
             # print the normalized leaves, which will be the actual applied shares
             print(global_shares.leave_shares)
+            print(sorted_leaves)
 
             # Decide which is the global share to use. We need to go top to bottom and order the shares by
             # which are underserved
 
             # WATCHOUT: a job might be stuck on a site because its share is completely filled by sites with
             # specific site-capability that won't run anything else. Job brokerage should be global share aware
-
-
 
         except:
             err_type, err_value = sys.exc_info()[:2]
