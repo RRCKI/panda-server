@@ -9526,18 +9526,30 @@ class DBProxy:
 
         try:
 
+            # Get the share leaves sorted by order of under-pledging
             global_shares = GlobalShares()
             sorted_leaves = global_shares.get_sorted_leaves()
 
-            # print the normalized leaves, which will be the actual applied shares
-            print(global_shares.leave_shares)
-            print(sorted_leaves)
+            var_map = {}
+            i = 0
+            for leave in sorted_leaves:
+                var_map[':leave{0}'.format(i)] = leave.name
+                i += 1
 
-            # Decide which is the global share to use. We need to go top to bottom and order the shares by
-            # which are underserved
 
-            # WATCHOUT: a job might be stuck on a site because its share is completely filled by sites with
-            # specific site-capability that won't run anything else. Job brokerage should be global share aware
+            sql_order_by = order by decode (pandaid,
+1756240785, 1,
+1759465040, 2,
+1759291321, 3,
+1759588609, 4,
+1759291246, 5,
+1759465195, 6,
+1758444561, 7,
+8)
+
+
+            # TODO: a job might be stuck on a site because its share is completely filled by sites with
+            # TODO: specific site-capability that won't run anything else. Job brokerage should be global share aware
 
         except:
             err_type, err_value = sys.exc_info()[:2]
@@ -16546,11 +16558,10 @@ class DBProxy:
 
         _logger.debug("definitions %s"%(definitions))
          
-        retrial_rules = {} #TODO: Consider if we want a class RetrialRule
+        retrial_rules = {}
         for definition in definitions:
             error_source, error_code, error_diag, parameters, architecture, release, wqid, action, e_active, a_active = definition
-                
-            #TODO: Need to define a formatting and naming convention for setting the parameters
+
             #Convert the parameter string into a dictionary
             try:
                 #1. Convert a string like "key1=value1&key2=value2" into [[key1, value1],[key2,value2]]
