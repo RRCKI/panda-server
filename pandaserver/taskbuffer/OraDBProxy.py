@@ -50,7 +50,7 @@ else:
 warnings.filterwarnings('ignore')
 
 # logger
-_logger = PandaLogger().getLogger('DBProxy')
+#_logger = PandaLogger().getLogger('DBProxy')
 
 # lock file
 _lockGetSN   = open(panda_config.lockfile_getSN, 'w')
@@ -85,7 +85,9 @@ class DBProxy:
         self.myHostName = socket.getfqdn()
         self.backend = panda_config.backend
 
-        
+        global _logger
+        _logger = PandaLogger().getLogger('DBProxy')
+
     # connect to DB
     def connect(self,dbhost=panda_config.dbhost,dbpasswd=panda_config.dbpasswd,
                 dbuser=panda_config.dbuser,dbname=panda_config.dbname,
@@ -2849,7 +2851,7 @@ class DBProxy:
                 sql1 = sql1[:-1]
                 sql1+= ") "
         # production share
-        if prodSourceLabel in ['managed',None,'sharetest']:
+        if prodSourceLabel in ['managed', None, 'sharetest']:
             aggSitesForFairshare = []
             if aggSiteMap.has_key(siteName):
                 aggSitesForFairshare = aggSiteMap[siteName].keys()
@@ -2859,21 +2861,27 @@ class DBProxy:
 
             # there is a site capability defined - use the old fairshare mechanisms
             using_site_capability = False
-            if self.faresharePolicy.has_key(siteName) and self.faresharePolicy[sitename]['usingCloud'] == '':
+            if self.faresharePolicy.has_key(siteName) and self.faresharePolicy[siteName]['usingCloud'] == '':
                 using_site_capability = True
 
             # if global shares are active and there is no site capability defined
+            global_share_sql, global_share_varmap = None, {}
             if hasattr(panda_config, 'global_shares') and panda_config.global_shares == True\
                     and not (self.faresharePolicy.has_key(siteName) and self.faresharePolicy[siteName]=='')\
                     and not using_site_capability:
-                shareSQL, shareVarMap = self.getCriteriaForGlobalShares(siteName, aggSitesForFairshare)
+                global_share_sql, global_share_varmap = self.getCriteriaForGlobalShares(siteName, aggSitesForFairshare)
+
+                if global_share_varmap: # copy the var map, but not the sql, since it has to be at the very end
+                    for tmpShareKey in global_share_varmap.keys():
+                        getValMap[tmpShareKey] = global_share_varmap[tmpShareKey]
             else:
                 shareSQL,shareVarMap = self.getCriteriaForProdShare(siteName,aggSitesForFairshare)
 
-            if shareVarMap != {}:
-                sql1 += shareSQL
-                for tmpShareKey in shareVarMap.keys():
-                    getValMap[tmpShareKey] = shareVarMap[tmpShareKey] 
+                if shareVarMap != {}:
+                    sql1 += shareSQL
+                    for tmpShareKey in shareVarMap.keys():
+                        getValMap[tmpShareKey] = shareVarMap[tmpShareKey]
+
         sql2 = "SELECT %s FROM ATLAS_PANDA.jobsActive4 " % JobSpec.columnNames()
         sql2+= "WHERE PandaID=:PandaID"
         retJobs = []
@@ -2902,7 +2910,7 @@ class DBProxy:
                     # start transaction
                     self.conn.begin()
                     # select
-                    self.cur.arraysize = 100                    
+                    self.cur.arraysize = 100
                     self.cur.execute(sqlDDM+comment, ddmValMap)
                     resDDM = self.cur.fetchall()
                     # commit
@@ -2955,7 +2963,7 @@ class DBProxy:
                 if prodSourceLabel in ['ddm']:
                     # to add some delay for attempts
                     sql1 += attSQL
-                    getValMap[':creationTime'] = attLimit                    
+                    getValMap[':creationTime'] = attLimit
                 nTry=1
                 for iTry in range(nTry):
                     # set siteID
@@ -2971,7 +2979,9 @@ class DBProxy:
                         # get max priority for analysis jobs
                         if prodSourceLabel in ['panda','user']:
                             sqlMX = "SELECT /*+ INDEX_RS_ASC(tab (PRODSOURCELABEL COMPUTINGSITE JOBSTATUS) ) */ MAX(currentPriority) FROM ATLAS_PANDA.jobsActive4 tab "
-                            sqlMX+= sql1
+                            sqlMX += sql1
+                            if global_share_sql:
+                                sqlMX += global_share_sql
                             _logger.debug(sqlMX+comment+str(getValMap))
                             # start transaction
                             self.conn.begin()
@@ -2992,9 +3002,11 @@ class DBProxy:
                         if toGetPandaIDs:
                             # get PandaIDs
                             sqlP = "SELECT /*+ INDEX_RS_ASC(tab (PRODSOURCELABEL COMPUTINGSITE JOBSTATUS) ) */ PandaID,currentPriority,specialHandling FROM ATLAS_PANDA.jobsActive4 tab "
-                            sqlP+= sql1
+                            sqlP += sql1
                             if ':currentPriority' in getValMap:
                                 sqlP += "AND currentPriority=:currentPriority "
+                            if global_share_sql:
+                                sqlP += global_share_sql
                             _logger.debug(sqlP+comment+str(getValMap))
                             # start transaction
                             self.conn.begin()
@@ -3301,8 +3313,8 @@ class DBProxy:
                     _logger.error('recordStatusChange in getJobs')
             return retJobs,nSent
         except:
-            errtype,errvalue = sys.exc_info()[:2]
-            errStr = "getJobs : %s %s" % (errtype,errvalue)
+            errtype, errvalue= sys.exc_info()[:2]
+            errStr = "getJobs : %s %s" % (errtype, errvalue)
             errStr.strip()
             errStr += traceback.format_exc()
             _logger.error(errStr)
@@ -9536,20 +9548,16 @@ class DBProxy:
                 var_map[':leave{0}'.format(i)] = leave.name
                 i += 1
 
+            leave_bindings = ','.join(':leave{0}, {0}'.format(i) for i in xrange(len(sorted_leaves)))
 
-            sql_order_by = order by decode (pandaid,
-1756240785, 1,
-1759465040, 2,
-1759291321, 3,
-1759588609, 4,
-1759291246, 5,
-1759465195, 6,
-1758444561, 7,
-8)
-
+            sql_order_by = "order by decode (gshare, {0}, {1})".format(leave_bindings, len(sorted_leaves))
+            print sql_order_by
+            print var_map
 
             # TODO: a job might be stuck on a site because its share is completely filled by sites with
             # TODO: specific site-capability that won't run anything else. Job brokerage should be global share aware
+
+            return sql_order_by, var_map
 
         except:
             err_type, err_value = sys.exc_info()[:2]
@@ -10359,7 +10367,7 @@ class DBProxy:
                                 faresharePolicy[siteid]['idListWithPrio'].append(tmpDefItem['id'])
                 except:
                     errtype,errvalue = sys.exc_info()[:2]                    
-                    _logger.warning("getFaresharePolicy : wrond definition '%s' for %s : %s %s" % (faresharePolicy,siteid,errtype,errvalue))                    
+                    _logger.warning("getFaresharePolicy : wrong definition '%s' for %s : %s %s" % (faresharePolicy,siteid,errtype,errvalue))
             _logger.debug("getFaresharePolicy -> %s" % str(faresharePolicy))
             if not getNewMap:
                 self.faresharePolicy = faresharePolicy
