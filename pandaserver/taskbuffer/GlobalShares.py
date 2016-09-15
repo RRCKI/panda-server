@@ -1,4 +1,7 @@
 import re
+import time
+import datetime
+from threading import Lock
 
 from config import panda_config
 from pandalogger.PandaLogger import PandaLogger
@@ -194,47 +197,186 @@ class GlobalShares:
     __metaclass__ = Singleton
 
     def __init__(self):
-
-        # Initialize DB connection
+        # task buffer is imported here to avoid circular import between global shares and oradbproxy
         from taskbuffer.TaskBuffer import taskBuffer
+
+        self.lock = Lock()
+
+        # TODO: Ask Tadashi for advise, whether I need a lock here as well
+        t_before = time.time()
+        # Initialize DB connection
         taskBuffer.init(panda_config.dbhost, panda_config.dbpasswd, nDBConnection=1)
         self.__task_buffer = taskBuffer
+        t_after = time.time()
+        total = t_after - t_before
+        _logger.debug('Getting a taskbuffer instance took {0}s'.format(total))
+
+        self.tree = None # Pointer to the root of the global shares tree
+        self.leave_shares = None # Pointer to the list with leave shares
+        self.__t_update_shares = None # Timestamp when the shares were last updated
+        self.__hs_distribution = None # HS06s distribution of sites
+        self.__t_update_distribution = None  # Timestamp when the HS06s distribution was last updated
+
+        self.__reload_shares()
+        self.__reload_hs_distribution()
+
+    def __get_hs_leave_distribution(self, leave_shares):
+        """
+        Get the current HS06 distribution for running and queued jobs
+        """
+        comment = ' /* DBProxy.get_hs_leave_distribution */'
+
+        sql_hs_distribution = """
+            SELECT gshare, jobstatus_grouped, SUM(HS)
+            FROM
+                (SELECT gshare, HS,
+                     CASE
+                         WHEN jobstatus IN('activated') THEN 'queued'
+                         WHEN jobstatus IN('sent', 'starting', 'running', 'holding') THEN 'executing'
+                         ELSE 'ignore'
+                     END jobstatus_grouped
+                 FROM ATLAS_PANDA.JOBS_SHARE_STATS JSS)
+            GROUP BY gshare, jobstatus_grouped
+            """
+
+        proxy = self.__task_buffer.proxyPool.getProxy()
+        hs_distribution_raw = proxy.querySQL(sql_hs_distribution + comment)
+        self.__task_buffer.proxyPool.putProxy(proxy)
+
+        # get the hs distribution data into a dictionary structure
+        hs_distribution_dict = {}
+        hs_queued_total = 0
+        hs_executing_total = 0
+        hs_ignore_total = 0
+        for hs_entry in hs_distribution_raw:
+            gshare, status_group, hs = hs_entry
+            hs_distribution_dict.setdefault(gshare, {PLEDGED: 0, QUEUED: 0, EXECUTING: 0})
+            hs_distribution_dict[gshare][status_group] = hs
+            # calculate totals
+            if status_group == QUEUED:
+                hs_queued_total += hs
+            elif status_group == EXECUTING:
+                hs_executing_total += hs
+            else:
+                hs_ignore_total += hs
+
+        # Calculate the ideal HS06 distribution based on shares.
+        for share_node in leave_shares:
+            share_name, share_value = share_node.name, share_node.value
+            hs_pledged_share = hs_executing_total * share_value / 100.0
+
+            hs_distribution_dict.setdefault(share_name, {PLEDGED: 0, QUEUED: 0, EXECUTING: 0})
+            # Pledged HS according to global share definitions
+            hs_distribution_dict[share_name]['pledged'] = hs_pledged_share
+        return hs_distribution_dict
+
+    def __reload_shares(self, force = False):
+        """
+        Reloads the shares from the DB and recalculates distributions
+        """
+
+        # Acquire lock to prevent parallel reloads
+        self.lock.acquire()
+
+        # Don't reload shares every time
+        if (self.__t_update_shares is not None and self.__t_update_shares > datetime.datetime.now() - datetime.timedelta(hours=1))\
+                or force:
+            self.lock.release()
+            return
 
         # Root dummy node
-        self.tree = Share('root', 100, None, None, None, None, None)
+        t_before = time.time()
+        tree = Share('root', 100, None, None, None, None, None)
+        t_after = time.time()
+        total = t_after - t_before
+        _logger.debug('Root dummy tree took {0}s'.format(total))
 
         # Get top level shares from DB
+        t_before = time.time()
         shares_top_level = self.__task_buffer.getShares(parents=None)
+        t_after = time.time()
+        total = t_after - t_before
+        _logger.debug('Getting shares took {0}s'.format(total))
 
         # Load branches
+        t_before = time.time()
         for (name, value, parent, prodsourcelabel, workinggroup, campaign, processingtype) in shares_top_level:
             share = Share(name, value, parent, prodsourcelabel, workinggroup, campaign, processingtype)
-            self.tree.children.append(self.__load_branch(share))
+            tree.children.append(self.__load_branch(share))
+        t_after = time.time()
+        total = t_after - t_before
+        _logger.debug('Loading the branches took {0}s'.format(total))
 
         # Normalize the values in the database
-        self.tree.normalize()
+        t_before = time.time()
+        tree.normalize()
+        t_after = time.time()
+        total = t_after - t_before
+        _logger.debug('Normalizing the values took {0}s'.format(total))
 
         # get the leave shares (the ones not having more children)
-        self.leave_shares = self.tree.get_leaves()
+        t_before = time.time()
+        leave_shares = tree.get_leaves()
+        t_after = time.time()
+        total = t_after - t_before
+        _logger.debug('Getting the leaves took {0}s'.format(total))
+
+        self.leave_shares = leave_shares
+        self.__t_update_shares = datetime.datetime.now()
 
         # get the distribution of shares
-        self.reload_hs_distribution()
+        t_before = time.time()
+        # Retrieve the current HS06 distribution of jobs from the database and then aggregate recursively up to the root
+        hs_distribution = self.__get_hs_leave_distribution(leave_shares)
+        tree.aggregate_hs_distribution(hs_distribution)
+        t_after = time.time()
+        total = t_after - t_before
+        _logger.debug('Reloading the hs distribution took {0}s'.format(total))
 
-    def get_sorted_leaves(self, refresh=True):
-        """
-        Optionally re-loads the HS06 distribution, then returns the leaves sorted by under usage
-        """
-        if refresh:
-            self.reload_hs_distribution()
+        self.tree = tree
+        self.__hs_distribution = hs_distribution
+        self.__t_update_distribution = datetime.datetime.now()
+        self.lock.release()
+        return
 
+    def __reload_hs_distribution(self):
+        """
+        Reloads the HS distribution
+        """
+
+        # Acquire lock to prevent parallel reloads
+        self.lock.acquire()
+
+        # Reload HS06s distribution every 10 seconds
+        if self.__t_update_distribution is not None \
+                and self.__t_update_distribution > datetime.datetime.now() - datetime.timedelta(seconds=10):
+            self.lock.release()
+            return
+
+        # Retrieve the current HS06 distribution of jobs from the database and then aggregate recursively up to the root
+        hs_distribution = self.__get_hs_leave_distribution(self.leave_shares)
+        self.tree.aggregate_hs_distribution(hs_distribution)
+        t_after = time.time()
+        total = t_after - t_before
+        _logger.debug('Reloading the hs distribution took {0}s'.format(total))
+
+        self.__hs_distribution = hs_distribution
+        self.__t_update_distribution = datetime.datetime.now()
+
+        self.lock.release()
+
+        # log the distribution for debugging purposes
+        _logger.info('Current HS06 distribution is {0}'.format(hs_distribution))
+
+        return
+
+    def get_sorted_leaves(self):
+        """
+        Re-loads the shares, then returns the leaves sorted by under usage
+        """
+        self.__reload_shares()
+        self.__reload_hs_distribution()
         return self.tree.sort_branch_by_current_hs_distribution(self.__hs_distribution)
-
-    def reload_hs_distribution(self):
-        """
-        Retrieve the current HS06 distribution of jobs from the database and then aggregate recursively up to the root
-        """
-        self.__hs_distribution = self.__get_hs_leave_distribution()
-        self.tree.aggregate_hs_distribution(self.__hs_distribution)
 
     def __load_branch(self, share):
         """
@@ -302,74 +444,23 @@ class GlobalShares:
         # Share not found
         return False
 
-    # get the current HS06 distribution for running and queued jobs
-    def __get_hs_leave_distribution(self):
-        comment = ' /* DBProxy.get_hs_leave_distribution */'
-
-        sql_hs_distribution = """
-            SELECT gshare, jobstatus_grouped, SUM(HS)
-            FROM
-                (SELECT gshare, HS,
-                     CASE
-                         WHEN jobstatus IN('activated') THEN 'queued'
-                         WHEN jobstatus IN('sent', 'starting', 'running', 'holding') THEN 'executing'
-                         ELSE 'ignore'
-                     END jobstatus_grouped
-                 FROM ATLAS_PANDA.JOBS_SHARE_STATS JSS)
-            GROUP BY gshare, jobstatus_grouped
-            """
-
-        proxy = self.__task_buffer.proxyPool.getProxy()
-        hs_distribution_raw = proxy.querySQL(sql_hs_distribution + comment)
-        self.__task_buffer.proxyPool.putProxy(proxy)
-
-        # get the hs distribution data into a dictionary structure
-        hs_distribution_dict = {}
-        hs_queued_total = 0
-        hs_executing_total = 0
-        hs_ignore_total = 0
-        for hs_entry in hs_distribution_raw:
-            gshare, status_group, hs = hs_entry
-            hs_distribution_dict.setdefault(gshare, {PLEDGED: 0, QUEUED: 0, EXECUTING: 0})
-            hs_distribution_dict[gshare][status_group] = hs
-            # calculate totals
-            if status_group == QUEUED:
-                hs_queued_total += hs
-            elif status_group == EXECUTING:
-                hs_executing_total += hs
-            else:
-                hs_ignore_total += hs
-
-        # Calculate the ideal HS06 distribution based on shares.
-        for share_node in self.leave_shares:
-            share_name, share_value = share_node.name, share_node.value
-            hs_pledged_share = hs_executing_total * share_value / 100.0
-
-            hs_distribution_dict.setdefault(share_name, {PLEDGED: 0, QUEUED: 0, EXECUTING: 0})
-            # Pledged HS according to global share definitions
-            hs_distribution_dict[share_name]['pledged'] = hs_pledged_share
-
-        return hs_distribution_dict
-
 
 if __name__ == "__main__":
     """
     Functional testing of the shares tree
     """
-    print 'main1'
     global_shares = GlobalShares()
-    print 'main2'
 
     # print the global share structure
-    print ('--------------GLOBAL SHARES TREE---------------')
+    print('--------------GLOBAL SHARES TREE---------------')
     print(global_shares.tree)
 
     # print the normalized leaves, which will be the actual applied shares
-    print ('--------------LEAVE SHARES---------------')
+    print('--------------LEAVE SHARES---------------')
     print(global_shares.leave_shares)
 
     # print the shares in order of under usage
-    print ('--------------LEAVE SHARES SORTED BY UNDER-PLEDGING---------------')
+    print('--------------LEAVE SHARES SORTED BY UNDER-PLEDGING---------------')
     print global_shares.get_sorted_leaves()
 
     # check a couple of shares if they are valid leave names

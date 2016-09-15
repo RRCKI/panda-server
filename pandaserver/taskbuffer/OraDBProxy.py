@@ -133,8 +133,7 @@ class DBProxy:
             _logger.error("connect : %s %s" % (type,value))
             return False
     
-    #Internal caching of a result. Use only for information 
-    #with low update frequency and low memory footprint
+    # Internal caching of a result. Use only for information with low update frequency and low memory footprint
     def memoize(f):
         memo = {}
         kwd_mark = object()
@@ -2742,6 +2741,7 @@ class DBProxy:
     # get jobs
     def getJobs(self,nJobs,siteName,prodSourceLabel,cpu,mem,diskSpace,node,timeout,computingElement,
                 atlasRelease,prodUserID,countryGroup,workingGroup,allowOtherCountry,taskID):
+
         comment = ' /* DBProxy.getJobs */'
 
         # aggregated sites which use different appdirs
@@ -2866,9 +2866,8 @@ class DBProxy:
 
             # if global shares are active and there is no site capability defined
             global_share_sql, global_share_varmap = None, {}
-            if hasattr(panda_config, 'global_shares') and panda_config.global_shares == True\
-                    and not (self.faresharePolicy.has_key(siteName) and self.faresharePolicy[siteName]=='')\
-                    and not using_site_capability:
+            if hasattr(panda_config, 'global_shares') and panda_config.global_shares == True:
+                # and not using_site_capability:
                 global_share_sql, global_share_varmap = self.getCriteriaForGlobalShares(siteName, aggSitesForFairshare)
 
                 if global_share_varmap: # copy the var map, but not the sql, since it has to be at the very end
@@ -2984,6 +2983,7 @@ class DBProxy:
                                 sqlMX += global_share_sql
                             _logger.debug(sqlMX+comment+str(getValMap))
                             # start transaction
+
                             self.conn.begin()
                             # select
                             self.cur.arraysize = 10                            
@@ -3311,7 +3311,7 @@ class DBProxy:
                     self.recordStatusChange(job.PandaID,job.jobStatus,jobInfo=job)
                 except:
                     _logger.error('recordStatusChange in getJobs')
-            return retJobs,nSent
+            return retJobs, nSent
         except:
             errtype, errvalue= sys.exc_info()[:2]
             errStr = "getJobs : %s %s" % (errtype, errvalue)
@@ -9529,35 +9529,81 @@ class DBProxy:
             return
 
 
-
     # get selection criteria for share of production activities
     def getCriteriaForGlobalShares(self, site_name, agg_sites=[]):
         comment = ' /* DBProxy.getCriteriaForGlobalShare */'
         # return for no criteria
+        ret_sql = ''
+        var_map = {}
         ret_empty = '', {}
 
         try:
-
             # Get the share leaves sorted by order of under-pledging
+            t_before = time.time()
             global_shares = GlobalShares()
+            t_after = time.time()
+            total = t_after - t_before
+            print 'Starting global shares took {0}s'.format(total)
+
+
+            t_before = time.time()
             sorted_leaves = global_shares.get_sorted_leaves()
+            t_after = time.time()
+            total = t_after - t_before
+            print 'Sorting leaves took {0}s'.format(total)
 
-            var_map = {}
-            i = 0
-            for leave in sorted_leaves:
-                var_map[':leave{0}'.format(i)] = leave.name
-                i += 1
+            MODE_ORDER_BY_GSHARES = 1
+            MODE_WHERE_GSHARE = 2
 
-            leave_bindings = ','.join(':leave{0}, {0}'.format(i) for i in xrange(len(sorted_leaves)))
+            mode = MODE_ORDER_BY_GSHARES
+            if hasattr(panda_config, 'gsharemode') and panda_config.gsharemode == MODE_ORDER_BY_GSHARES:
+                mode = MODE_ORDER_BY_GSHARES
+            elif hasattr(panda_config, 'gsharemode') and panda_config.gsharemode == MODE_WHERE_GSHARE:
+                mode = MODE_WHERE_GSHARE
 
-            sql_order_by = "order by decode (gshare, {0}, {1})".format(leave_bindings, len(sorted_leaves))
-            print sql_order_by
-            print var_map
+            if mode == MODE_ORDER_BY_GSHARES:
+                i = 0
+                for leave in sorted_leaves:
+                    var_map[':leave{0}'.format(i)] = leave.name
+                    i += 1
+
+                leave_bindings = ','.join(':leave{0}, {0}'.format(i) for i in xrange(len(sorted_leaves)))
+
+                ret_sql = "order by decode (gshare, {0}, {1})".format(leave_bindings, len(sorted_leaves))
+
+            elif mode == MODE_WHERE_GSHARE:
+                # Figure out the shares available in the site and order them
+                var_map[':site_name'] = site_name
+                sql_activated_jobs_by_gshare = """
+                    SELECT gshare, njobs FROM ATLAS_PANDA.JOBS_SHARE_STATS JSS
+                    WHERE computingsite = :site_name
+                    AND jobstatus = 'activated'
+                    """
+                self.cur.execute('{0}{1}'.format(sql_activated_jobs_by_gshare, comment))
+                activated_jobs_site_summary_list = self.cur.fetchall()
+                print activated_jobs_site_summary_list
+                activated_jobs_site_summary_dict = {}
+
+                for entry in activated_jobs_site_summary_list:
+                    # process list and put it in a dict for easy access
+                    gshare, njobs = entry
+                    activated_jobs_site_summary_dict[gshare] = njobs
+                    print '{0}: {1}'.format(gshare, njobs)
+                for leave in sorted_leaves:
+                    # run through the sorted leaves and select the first one available at the site
+                    if leave.name in activated_jobs_site_summary_dict:
+                        gshare_select = leave.name
+                        break
+
+                ret_sql = 'AND gshare=:gshare'
+                var_map[':gshare'] = gshare_select
 
             # TODO: a job might be stuck on a site because its share is completely filled by sites with
             # TODO: specific site-capability that won't run anything else. Job brokerage should be global share aware
 
-            return sql_order_by, var_map
+            _logger.debug('ret_sql: {0}'.format(ret_sql))
+            _logger.debug('var_map: {0}'.format(var_map))
+            return ret_sql, var_map
 
         except:
             err_type, err_value = sys.exc_info()[:2]

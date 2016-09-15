@@ -3,6 +3,7 @@ import sys
 import json
 import types
 import shlex
+import time
 import datetime
 import ProcessGroups
 import EventServiceUtils
@@ -705,9 +706,15 @@ class TaskBuffer:
         # get DBproxy
         proxy = self.proxyPool.getProxy()
         # get waiting jobs
+        t_before = time.time()
         jobs,nSent = proxy.getJobs(nJobs,siteName,prodSourceLabel,cpu,mem,diskSpace,node,timeout,computingElement,
                                    atlasRelease,prodUserID,countryGroup,workingGroup,allowOtherCountry,
                                    taskID)
+        t_after = time.time()
+        t_total = t_after - t_before
+        _logger.debug("getJobs : took {0}s for {1} nJobs={2} prodSourceLabel={3}"
+                      .format(t_total, siteName, nJobs, prodSourceLabel))
+
         # release proxy
         self.proxyPool.putProxy(proxy)
         # get Proxy Key

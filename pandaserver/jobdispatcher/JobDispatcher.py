@@ -152,6 +152,8 @@ class JobDipatcher:
     def getJob(self,siteName,prodSourceLabel,cpu,mem,diskSpace,node,timeout,computingElement,
                atlasRelease,prodUserID,getProxyKey,countryGroup,workingGroup,allowOtherCountry,
                realDN,taskID,nJobs,acceptJson):
+
+        t_getJob_start = time.time()
         jobs = []
         useGLEXEC = False
         useProxyCache = False
@@ -166,6 +168,7 @@ class JobDipatcher:
         tmpWrapper.run(tmpNumJobs,siteName,prodSourceLabel,cpu,mem,diskSpace,node,timeout,computingElement,
                        atlasRelease,prodUserID,getProxyKey,countryGroup,workingGroup,allowOtherCountry,
                        taskID)
+
         if isinstance(tmpWrapper.result,types.ListType):
             jobs = jobs + tmpWrapper.result
         # make response
@@ -264,6 +267,10 @@ class JobDipatcher:
                 response=Protocol.Response(Protocol.SC_NoJobs)
         # return
         _logger.debug("getJob : %s %s useGLEXEC=%s ret -> %s" % (siteName,node,useGLEXEC,response.encode(acceptJson)))
+
+        t_getJob_end = time.time()
+        t_getJob_spent = t_getJob_end - t_getJob_start
+        _logger.debug("getJob : siteName={0} took timing={1}s".format(siteName, t_getJob_spent))
         return response.encode(acceptJson)
 
 
@@ -664,7 +671,7 @@ def getJob(req,siteName,token=None,timeout=60,cpu=None,mem=None,diskSpace=None,p
         prodManager = _checkRole(fqans,realDN,jobDispatcher,False,site=siteName)
     else:
         prodManager = _checkRole(fqans,realDN,jobDispatcher,site=siteName,
-                                 hostname=req.get_remote_host())        
+                                 hostname=req.get_remote_host())
     # check token
     validToken = _checkToken(token,jobDispatcher)
     # set DN for non-production user
@@ -672,6 +679,7 @@ def getJob(req,siteName,token=None,timeout=60,cpu=None,mem=None,diskSpace=None,p
         prodUserID = realDN
     # allow getProxyKey for production role
     if getProxyKey == 'True' and prodManager:
+        _logger.debug("4 getProxyKey true")
         getProxyKey = True
     else:
         getProxyKey = False
