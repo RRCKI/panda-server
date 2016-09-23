@@ -234,7 +234,7 @@ class GlobalShares:
         """
         Get the current HS06 distribution for running and queued jobs
         """
-        comment = ' /* DBProxy.get_hs_leave_distribution */'
+        comment = ' /* GlobalShares.get_hs_leave_distribution */'
 
         sql_hs_distribution = """
             SELECT gshare, jobstatus_grouped, SUM(HS)
@@ -280,6 +280,51 @@ class GlobalShares:
             hs_distribution_dict[share_name]['pledged'] = hs_pledged_share
         return hs_distribution_dict
 
+    # retrieve global shares
+    def get_shares(self, parents=''):
+        comment = ' /* GlobalShares.get_shares */'
+        methodName = comment.split(' ')[-2].split('.')[-1]
+        tmpLog = LogWrapper(_logger, methodName)
+        tmpLog.debug('start')
+
+
+        sql  = """
+               SELECT NAME, VALUE, PARENT, PRODSOURCELABEL, WORKINGGROUP, CAMPAIGN, PROCESSINGTYPE
+               FROM ATLAS_PANDA.GLOBAL_SHARES
+               """
+        var_map = None
+
+        if parents == '':
+            # Get all shares
+            pass
+        elif parents is None:
+            # Get top level shares
+            sql += "WHERE parent IS NULL"
+
+        elif type(parents) == str:
+            # Get the children of a specific share
+            var_map = {':parent': parents}
+            sql += "WHERE parent = :parent"
+
+        elif type(parents) in (list, tuple):
+            # Get the children of a list of shares
+            i = 0
+            var_map = {}
+            for parent in parents:
+                key = ':parent{0}'.format(i)
+                var_map[key] = parent
+                i += 1
+
+            parentBindings = ','.join(':parent{0}'.format(i) for i in xrange(len(parents)))
+            sql += "WHERE parent IN ({0})".format(parentBindings)
+
+        proxy = self.__task_buffer.proxyPool.getProxy()
+        resList = proxy.querySQL(sql + comment, var_map)
+        self.__task_buffer.proxyPool.putProxy(proxy)
+
+        tmpLog.debug('done')
+        return resList
+
     def __reload_shares(self, force = False):
         """
         Reloads the shares from the DB and recalculates distributions
@@ -303,7 +348,7 @@ class GlobalShares:
 
         # Get top level shares from DB
         t_before = time.time()
-        shares_top_level = self.__task_buffer.getShares(parents=None)
+        shares_top_level = self.get_shares(parents=None)
         t_after = time.time()
         total = t_after - t_before
         _logger.debug('Getting shares took {0}s'.format(total))
@@ -403,7 +448,7 @@ class GlobalShares:
         node = Share(share.name, share.value, share.parent, share.prodsourcelabel,
                      share.workinggroup, share.campaign, share.processingtype)
 
-        children = self.__task_buffer.getShares(parents=share.name)
+        children = self.__task_buffer.get_shares(parents=share.name)
         if not children:
             return node
 
