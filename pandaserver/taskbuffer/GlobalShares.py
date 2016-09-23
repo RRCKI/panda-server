@@ -7,6 +7,7 @@ from config import panda_config
 from pandalogger.PandaLogger import PandaLogger
 f = open('/var/log/panda/debuggin', 'a+')
 f.write('test1')
+print 'test1''
 f.close()
 from taskbuffer.TaskBuffer import taskBuffer
 f = open('/var/log/panda/debuggin', 'a+')
