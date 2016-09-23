@@ -5,8 +5,13 @@ from threading import Lock
 
 from config import panda_config
 from pandalogger.PandaLogger import PandaLogger
-_logger = PandaLogger().getLogger('GlobalShares')
-
+f = open('/var/log/panda/debuggin', 'a+')
+f.write('test1')
+f.close()
+from taskbuffer.TaskBuffer import taskBuffer
+f = open('/var/log/panda/debuggin', 'a+')
+f.write('test2')
+f.close()
 # Definitions
 EXECUTING = 'executing'
 QUEUED = 'queued'
@@ -197,15 +202,19 @@ class GlobalShares:
     __metaclass__ = Singleton
 
     def __init__(self):
-        # task buffer is imported here to avoid circular import between global shares and oradbproxy
-        from taskbuffer.TaskBuffer import taskBuffer
 
+        global _logger
+        _logger = PandaLogger().getLogger('GlobalShares')
+
+        # task buffer is imported here to avoid circular import between global shares and oradbproxy
         self.lock = Lock()
 
         # TODO: Ask Tadashi for advise, whether I need a lock here as well
         t_before = time.time()
         # Initialize DB connection
-        taskBuffer.init(panda_config.dbhost, panda_config.dbpasswd, nDBConnection=1)
+
+        if not (hasattr(taskBuffer, 'proxyPool') and taskBuffer.proxyPool):
+            taskBuffer.init(panda_config.dbhost, panda_config.dbpasswd)
         self.__task_buffer = taskBuffer
         t_after = time.time()
         total = t_after - t_before
@@ -331,7 +340,7 @@ class GlobalShares:
         tree.aggregate_hs_distribution(hs_distribution)
         t_after = time.time()
         total = t_after - t_before
-        _logger.debug('Reloading the hs distribution took {0}s'.format(total))
+        _logger.debug('Aggregating the hs distribution took {0}s'.format(total))
 
         self.tree = tree
         self.__hs_distribution = hs_distribution
@@ -345,16 +354,22 @@ class GlobalShares:
         """
 
         # Acquire lock to prevent parallel reloads
+        _logger.debug('lock')
         self.lock.acquire()
 
+        _logger.debug(self.__t_update_distribution)
+        _logger.debug(self.__hs_distribution)
         # Reload HS06s distribution every 10 seconds
         if self.__t_update_distribution is not None \
                 and self.__t_update_distribution > datetime.datetime.now() - datetime.timedelta(seconds=10):
             self.lock.release()
+            _logger.debug('release')
             return
 
         # Retrieve the current HS06 distribution of jobs from the database and then aggregate recursively up to the root
+        _logger.debug('get dist')
         hs_distribution = self.__get_hs_leave_distribution(self.leave_shares)
+        _logger.debug('aggr dist')
         self.tree.aggregate_hs_distribution(hs_distribution)
         t_after = time.time()
         total = t_after - t_before
@@ -375,7 +390,9 @@ class GlobalShares:
         Re-loads the shares, then returns the leaves sorted by under usage
         """
         self.__reload_shares()
+        _logger.debug('going to call reload dist')
         self.__reload_hs_distribution()
+        _logger.debug('back from call')
         return self.tree.sort_branch_by_current_hs_distribution(self.__hs_distribution)
 
     def __load_branch(self, share):
@@ -428,7 +445,7 @@ class GlobalShares:
 
         if selected_share_name == 'Undefined':
             _logger.warning("No share matching jediTaskId={0} (prodSourceLabel={1} workingGroup={2} campaign={3} )".
-                            format(task.jediTaskID, task.prodSourceLabel, task.workingGroup, task.campaign))
+                           format(task.jediTaskID, task.prodSourceLabel, task.workingGroup, task.campaign))
 
         return selected_share_name
 
@@ -443,116 +460,3 @@ class GlobalShares:
 
         # Share not found
         return False
-
-
-if __name__ == "__main__":
-    """
-    Functional testing of the shares tree
-    """
-    global_shares = GlobalShares()
-
-    # print the global share structure
-    print('--------------GLOBAL SHARES TREE---------------')
-    print(global_shares.tree)
-
-    # print the normalized leaves, which will be the actual applied shares
-    print('--------------LEAVE SHARES---------------')
-    print(global_shares.leave_shares)
-
-    # print the shares in order of under usage
-    print('--------------LEAVE SHARES SORTED BY UNDER-PLEDGING---------------')
-    print global_shares.get_sorted_leaves()
-
-    # check a couple of shares if they are valid leave names
-    share_name = 'wrong_share'
-    print ("Share {0} is valid: {1}".format(share_name, global_shares.is_valid_share(share_name)))
-    share_name = 'MC16Pile'
-    print ("Share {0} is valid: {1}".format(share_name, global_shares.is_valid_share(share_name)))
-
-    # create a fake tasks with relevant fields and retrieve its share
-    from pandajedi.jedicore.JediTaskSpec import JediTaskSpec
-    task_spec = JediTaskSpec()
-
-    # Analysis task
-    task_spec.prodSourceLabel = 'user'
-    task_spec.campaign = 'dummy_campaign'
-    task_spec.workingGroup = 'dummy_wg'
-    task_spec.processingType = 'dummy_type'
-    print("Share for task is {0}(should be 'Analysis')".format(global_shares.get_share_for_task(task_spec)))
-
-    # Production task without any matching leave
-    task_spec.prodSourceLabel = 'managed'
-    task_spec.campaign = 'dummy_campaign'
-    task_spec.workingGroup = 'dummy_wg'
-    task_spec.processingType = 'dummy_type'
-    print("Share for task is {0}(should be 'Undefined')".format(global_shares.get_share_for_task(task_spec)))
-
-    # Test task
-    task_spec.prodSourceLabel = 'test123'
-    task_spec.campaign = 'dummy_campaign'
-    task_spec.workingGroup = 'dummy_wg'
-    task_spec.processingType = 'dummy_type'
-    print("Share for task is {0}(should be 'Test')".format(global_shares.get_share_for_task(task_spec)))
-
-    # Derivations task without any matching leave
-    task_spec.prodSourceLabel = 'managed'
-    task_spec.campaign = 'dummy_campaign'
-    task_spec.workingGroup = 'GP_PHYS'
-    task_spec.processingType = 'dummy_type'
-    print("Share for task is {0}(should be 'Undefined')".format(global_shares.get_share_for_task(task_spec)))
-
-    # Reprocessing task without any matching leave
-    task_spec.prodSourceLabel = 'managed'
-    task_spec.campaign = 'dummy_campaign'
-    task_spec.workingGroup = 'AP_REPR'
-    task_spec.processingType = 'dummy_type'
-    print("Share for task is {0}(should be 'Undefined')".format(global_shares.get_share_for_task(task_spec)))
-
-    # Group production task
-    task_spec.prodSourceLabel = 'managed'
-    task_spec.campaign = 'dummy_campaign'
-    task_spec.workingGroup = 'GP_LOL'
-    task_spec.processingType = 'dummy_type'
-    print("Share for task is {0}(should be 'Group production')".format(global_shares.get_share_for_task(task_spec)))
-
-    # Upgrade task
-    task_spec.prodSourceLabel = 'managed'
-    task_spec.campaign = 'dummy_campaign'
-    task_spec.workingGroup = 'AP_UPG'
-    task_spec.processingType = 'dummy_type'
-    print("Share for task is {0}(should be 'Upgrade')".format(global_shares.get_share_for_task(task_spec)))
-
-    # HLT Reprocessing
-    task_spec.prodSourceLabel = 'managed'
-    task_spec.campaign = 'dummy_campaign'
-    task_spec.workingGroup = 'AP_THLT'
-    task_spec.processingType = 'dummy_type'
-    print("Share for task is {0}(should be 'HLT Reprocessing')".format(global_shares.get_share_for_task(task_spec)))
-
-    # Validation
-    task_spec.prodSourceLabel = 'managed'
-    task_spec.campaign = 'dummy_campaign'
-    task_spec.workingGroup = 'AP_VALI'
-    task_spec.processingType = 'dummy_type'
-    print("Share for task is {0}(should be 'Validation')".format(global_shares.get_share_for_task(task_spec)))
-
-    # Event Index
-    task_spec.prodSourceLabel = 'managed'
-    task_spec.campaign = 'dummy_campaign'
-    task_spec.workingGroup = 'proj-evind'
-    task_spec.processingType = 'dummy_type'
-    print("Share for task is {0}(should be 'Event Index')".format(global_shares.get_share_for_task(task_spec)))
-
-    # MC Derivations
-    task_spec.prodSourceLabel = 'managed'
-    task_spec.campaign = 'mc.*'
-    task_spec.workingGroup = 'GP_PHYS'
-    task_spec.processingType = 'dummy_type'
-    print("Share for task is {0}(should be 'MC Derivations')".format(global_shares.get_share_for_task(task_spec)))
-
-    # Data Derivations
-    task_spec.prodSourceLabel = 'managed'
-    task_spec.campaign = 'data.*'
-    task_spec.workingGroup = 'GP_PHYS'
-    task_spec.processingType = 'dummy_type'
-    print("Share for task is {0}(should be 'Data Derivations')".format(global_shares.get_share_for_task(task_spec)))

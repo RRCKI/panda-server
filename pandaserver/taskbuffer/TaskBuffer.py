@@ -38,6 +38,7 @@ class TaskBuffer:
     def init(self,dbname,dbpass,nDBConnection=10,useTimeout=False):
         # lock
         self.lock.acquire()
+        _logger.debug('WHAT?')
         # create Proxy Pool
         if self.proxyPool == None:
             self.proxyPool = DBProxyPool(dbname,dbpass,nDBConnection,useTimeout)
@@ -46,6 +47,7 @@ class TaskBuffer:
             self.processLimiter = ProcessLimiter()
         # release
         self.lock.release()
+        _logger.debug('WHAT2?')
 
 
     # check production role

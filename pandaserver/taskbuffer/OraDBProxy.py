@@ -36,7 +36,6 @@ from Utils import create_shards
 from pandalogger.PandaLogger import PandaLogger
 from pandalogger.LogWrapper import LogWrapper
 from config import panda_config
-from taskbuffer.GlobalShares import GlobalShares, EXECUTING, QUEUED, PLEDGED, IGNORE
 from brokerage.PandaSiteIDs import PandaSiteIDs
 from __builtin__ import True
 
@@ -2868,7 +2867,9 @@ class DBProxy:
             global_share_sql, global_share_varmap = None, {}
             if hasattr(panda_config, 'global_shares') and panda_config.global_shares == True:
                 # and not using_site_capability:
+                _logger.debug('1')
                 global_share_sql, global_share_varmap = self.getCriteriaForGlobalShares(siteName, aggSitesForFairshare)
+                _logger.debug('2')
 
                 if global_share_varmap: # copy the var map, but not the sql, since it has to be at the very end
                     for tmpShareKey in global_share_varmap.keys():
@@ -9540,17 +9541,22 @@ class DBProxy:
         try:
             # Get the share leaves sorted by order of under-pledging
             t_before = time.time()
+            _logger.debug('getCrit1')
+            from taskbuffer.GlobalShares import GlobalShares
+            _logger.debug('getCrit2')
             global_shares = GlobalShares()
             t_after = time.time()
             total = t_after - t_before
-            print 'Starting global shares took {0}s'.format(total)
+            _logger.debug('Starting global shares took {0}s'.format(total))
 
+
+            _logger.debug('Going to call get sorted leaves')
 
             t_before = time.time()
             sorted_leaves = global_shares.get_sorted_leaves()
             t_after = time.time()
             total = t_after - t_before
-            print 'Sorting leaves took {0}s'.format(total)
+            _logger.debug('Sorting leaves took {0}s'.format(total))
 
             MODE_ORDER_BY_GSHARES = 1
             MODE_WHERE_GSHARE = 2
@@ -9581,14 +9587,14 @@ class DBProxy:
                     """
                 self.cur.execute('{0}{1}'.format(sql_activated_jobs_by_gshare, comment))
                 activated_jobs_site_summary_list = self.cur.fetchall()
-                print activated_jobs_site_summary_list
+                _logger.debug(activated_jobs_site_summary_list)
                 activated_jobs_site_summary_dict = {}
 
                 for entry in activated_jobs_site_summary_list:
                     # process list and put it in a dict for easy access
                     gshare, njobs = entry
                     activated_jobs_site_summary_dict[gshare] = njobs
-                    print '{0}: {1}'.format(gshare, njobs)
+                    _logger.debug('{0}: {1}'.format(gshare, njobs))
                 for leave in sorted_leaves:
                     # run through the sorted leaves and select the first one available at the site
                     if leave.name in activated_jobs_site_summary_dict:
