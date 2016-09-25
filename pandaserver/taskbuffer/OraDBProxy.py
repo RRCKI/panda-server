@@ -95,8 +95,8 @@ class DBProxy:
         self.__hs_distribution = None # HS06s distribution of sites
         self.__t_update_distribution = None  # Timestamp when the HS06s distribution was last updated
 
-        self.__reload_shares()
-        self.__reload_hs_distribution()
+        #self.__reload_shares()
+        #self.__reload_hs_distribution()
 
     # connect to DB
     def connect(self,dbhost=panda_config.dbhost,dbpasswd=panda_config.dbpasswd,
@@ -9555,16 +9555,13 @@ class DBProxy:
             _logger.debug('getCrit1')
             print 'getCrit2'
             _logger.debug('getCrit2')
-            global_shares = GlobalShares()
             t_after = time.time()
             total = t_after - t_before
             _logger.debug('Starting global shares took {0}s'.format(total))
 
-
             _logger.debug('Going to call get sorted leaves')
-
             t_before = time.time()
-            sorted_leaves = global_shares.get_sorted_leaves()
+            sorted_leaves = self.get_sorted_leaves()
             t_after = time.time()
             total = t_after - t_before
             _logger.debug('Sorting leaves took {0}s'.format(total))
