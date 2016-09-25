@@ -26,6 +26,7 @@ import PrioUtil
 import ProcessGroups
 import JobUtils
 import EventServiceUtils
+import GlobalShares
 from DdmSpec  import DdmSpec
 from JobSpec  import JobSpec
 from FileSpec import FileSpec
@@ -37,7 +38,6 @@ from pandalogger.PandaLogger import PandaLogger
 from pandalogger.LogWrapper import LogWrapper
 from config import panda_config
 from brokerage.PandaSiteIDs import PandaSiteIDs
-from taskbuffer.GlobalShares import GlobalShares
 from __builtin__ import True
 
 if panda_config.backend == 'oracle':
@@ -85,6 +85,9 @@ class DBProxy:
         self.myHostName = socket.getfqdn()
         self.backend = panda_config.backend
 
+        global _logger
+        _logger = PandaLogger().getLogger('DBProxy')
+
         # global share variables
         self.tree = None # Pointer to the root of the global shares tree
         self.leave_shares = None # Pointer to the list with leave shares
@@ -94,10 +97,6 @@ class DBProxy:
 
         self.__reload_shares()
         self.__reload_hs_distribution()
-
-
-        global _logger
-        _logger = PandaLogger().getLogger('DBProxy')
 
     # connect to DB
     def connect(self,dbhost=panda_config.dbhost,dbpasswd=panda_config.dbpasswd,
@@ -18083,7 +18082,8 @@ class DBProxy:
             GROUP BY gshare, jobstatus_grouped
             """
 
-        hs_distribution_raw = self.querySQL(sql_hs_distribution + comment)
+        self.cur.execute(sql_hs_distribution + comment)
+        hs_distribution_raw = self.cur.fetchall()
 
         # get the hs distribution data into a dictionary structure
         hs_distribution_dict = {}
@@ -18152,7 +18152,8 @@ class DBProxy:
             parentBindings = ','.join(':parent{0}'.format(i) for i in xrange(len(parents)))
             sql += "WHERE parent IN ({0})".format(parentBindings)
 
-        resList = self.querySQL(sql + comment, var_map)
+        self.cur.execute(sql_hs_distribution + comment, var_map)
+        resList = self.cur.fetchall()
 
         tmpLog.debug('done')
         return resList
@@ -18162,18 +18163,14 @@ class DBProxy:
         Reloads the shares from the DB and recalculates distributions
         """
 
-        # Acquire lock to prevent parallel reloads
-        self.lock.acquire()
-
         # Don't reload shares every time
         if (self.__t_update_shares is not None and self.__t_update_shares > datetime.datetime.now() - datetime.timedelta(hours=1))\
                 or force:
-            self.lock.release()
             return
 
         # Root dummy node
         t_before = time.time()
-        tree = Share('root', 100, None, None, None, None, None)
+        tree = GlobalShares.Share('root', 100, None, None, None, None, None)
         t_after = time.time()
         total = t_after - t_before
         _logger.debug('Root dummy tree took {0}s'.format(total))
@@ -18188,7 +18185,7 @@ class DBProxy:
         # Load branches
         t_before = time.time()
         for (name, value, parent, prodsourcelabel, workinggroup, campaign, processingtype) in shares_top_level:
-            share = Share(name, value, parent, prodsourcelabel, workinggroup, campaign, processingtype)
+            share = GlobalShares.Share(name, value, parent, prodsourcelabel, workinggroup, campaign, processingtype)
             tree.children.append(self.__load_branch(share))
         t_after = time.time()
         total = t_after - t_before
@@ -18223,7 +18220,6 @@ class DBProxy:
         self.tree = tree
         self.__hs_distribution = hs_distribution
         self.__t_update_distribution = datetime.datetime.now()
-        self.lock.release()
         return
 
     def __reload_hs_distribution(self):
@@ -18231,16 +18227,11 @@ class DBProxy:
         Reloads the HS distribution
         """
 
-        # Acquire lock to prevent parallel reloads
-        _logger.debug('lock')
-        self.lock.acquire()
-
         _logger.debug(self.__t_update_distribution)
         _logger.debug(self.__hs_distribution)
         # Reload HS06s distribution every 10 seconds
         if self.__t_update_distribution is not None \
                 and self.__t_update_distribution > datetime.datetime.now() - datetime.timedelta(seconds=10):
-            self.lock.release()
             _logger.debug('release')
             return
 
@@ -18255,8 +18246,6 @@ class DBProxy:
 
         self.__hs_distribution = hs_distribution
         self.__t_update_distribution = datetime.datetime.now()
-
-        self.lock.release()
 
         # log the distribution for debugging purposes
         _logger.info('Current HS06 distribution is {0}'.format(hs_distribution))
@@ -18277,7 +18266,7 @@ class DBProxy:
         """
         Recursively load a branch
         """
-        node = Share(share.name, share.value, share.parent, share.prodsourcelabel,
+        node = GlobalShares.Share(share.name, share.value, share.parent, share.prodsourcelabel,
                      share.workinggroup, share.campaign, share.processingtype)
 
         children = self.get_shares(parents=share.name)
@@ -18285,7 +18274,7 @@ class DBProxy:
             return node
 
         for (name, value, parent, prodsourcelabel, workinggroup, campaign, processingtype) in children:
-            child = Share(name, value, parent, prodsourcelabel, workinggroup, campaign, processingtype)
+            child = GlobalShares.Share(name, value, parent, prodsourcelabel, workinggroup, campaign, processingtype)
             node.children.append(self.__load_branch(child))
 
         return node
