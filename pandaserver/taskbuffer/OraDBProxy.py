@@ -18089,12 +18089,12 @@ class DBProxy:
         hs_ignore_total = 0
         for hs_entry in hs_distribution_raw:
             gshare, status_group, hs = hs_entry
-            hs_distribution_dict.setdefault(gshare, {PLEDGED: 0, QUEUED: 0, EXECUTING: 0})
+            hs_distribution_dict.setdefault(gshare, {GlobalShares.PLEDGED: 0, GlobalShares.QUEUED: 0, GlobalShares.EXECUTING: 0})
             hs_distribution_dict[gshare][status_group] = hs
             # calculate totals
-            if status_group == QUEUED:
+            if status_group == GlobalShares.QUEUED:
                 hs_queued_total += hs
-            elif status_group == EXECUTING:
+            elif status_group == GlobalShares.EXECUTING:
                 hs_executing_total += hs
             else:
                 hs_ignore_total += hs
@@ -18104,7 +18104,7 @@ class DBProxy:
             share_name, share_value = share_node.name, share_node.value
             hs_pledged_share = hs_executing_total * share_value / 100.0
 
-            hs_distribution_dict.setdefault(share_name, {PLEDGED: 0, QUEUED: 0, EXECUTING: 0})
+            hs_distribution_dict.setdefault(share_name, {GlobalShares.PLEDGED: 0, GlobalShares.QUEUED: 0, GlobalShares.EXECUTING: 0})
             # Pledged HS according to global share definitions
             hs_distribution_dict[share_name]['pledged'] = hs_pledged_share
         return hs_distribution_dict
@@ -18149,7 +18149,7 @@ class DBProxy:
             parentBindings = ','.join(':parent{0}'.format(i) for i in xrange(len(parents)))
             sql += "WHERE parent IN ({0})".format(parentBindings)
 
-        self.cur.execute(sql_hs_distribution + comment, var_map)
+        self.cur.execute(sql + comment, var_map)
         resList = self.cur.fetchall()
 
         tmpLog.debug('done')
