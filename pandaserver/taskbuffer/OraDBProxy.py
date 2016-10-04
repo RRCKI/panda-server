@@ -18234,6 +18234,7 @@ class DBProxy:
 
         # Retrieve the current HS06 distribution of jobs from the database and then aggregate recursively up to the root
         _logger.debug('get dist')
+        t_before = time.time()
         hs_distribution = self.__get_hs_leave_distribution(self.leave_shares)
         _logger.debug('aggr dist')
         self.tree.aggregate_hs_distribution(hs_distribution)
