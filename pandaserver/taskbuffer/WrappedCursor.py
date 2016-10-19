@@ -103,14 +103,41 @@ class WrappedCursor(object):
             sql = re.sub('NOWAIT', "", sql)
             # RETURNING INTO
             returningInto = None
-            m = re.search("RETURNING ([^\s]+) INTO ([^\s]+)", sql, re.I)
-            if m is not None:
-                returningInto = [{'returning': m.group(1), 'into': m.group(2)}]
-                self._returningIntoMySQLpre(returningInto, varDict, cur)
-                sql = re.sub(m.group(0), '', sql)
+            #Moved to INSERT section
+            #m = re.search("RETURNING ([^\s]+) INTO ([^\s]+)", sql, re.I)
+            #if m is not None:
+            #    returningInto = [{'returning': m.group(1), 'into': m.group(2)}]
+            #    self._returningIntoMySQLpre(returningInto, varDict, cur)
+            #    sql = re.sub(m.group(0), '', sql)
             # Addressing sequence
+            seq_name = ""
             if "INSERT" in sql:
-                sql = re.sub('[a-zA-Z\._]+\.nextval','NULL',sql)
+                #sql = re.sub('[a-zA-Z\._]+\.nextval','NULL',sql)
+                tmpstr = re.search('[a-zA-Z0-9\._]+\.nextval',sql)
+                if tmpstr:
+                        schema_name = tmpstr.group(0).split('.')[0]
+                        seq_name = tmpstr.group(0).split('.')[1]
+                        sql = re.sub('[a-zA-Z0-9\._]+\.nextval','{0}.nextval("{1}")'.format(schema_name,seq_name),sql)
+                m = re.search("RETURNING ([^\s]+) INTO ([^\s]+)", sql, re.I)
+                if m is not None:
+                    returningInto = [{'returning': m.group(1), 'into': m.group(2)}]
+                    self._returningIntoMySQLpre(returningInto, varDict, cur)
+                    sql = re.sub(m.group(0), '', sql)
+
+            sql_update_returning = False
+
+            if "UPDATE" in sql:
+                m = re.search("RETURNING ([^\s]+) INTO ([^\s]+)", sql, re.I)
+                if m is not None:
+                    returningInto = [{'returning': m.group(1), 'into': m.group(2)}]
+                    self._returningIntoMySQLpre(returningInto, varDict, cur)
+                    sql = re.sub(m.group(0), '', sql)
+                    #In case of UPDATE in JEDI, RETURNING variables cannot be acquired via sequences - additional select is required.
+                    sql_update_returning = True
+
+
+
+
             # schema names
             sql = re.sub('ATLAS_PANDA\.',     panda_config.schemaPANDA + '.',     sql)
             sql = re.sub('ATLAS_PANDAMETA\.', panda_config.schemaMETA + '.',      sql)
@@ -144,7 +171,30 @@ class WrappedCursor(object):
             print "DEBUG execute : varDict %s " % newVarDict
             ret = cur.execute(sql, newVarDict)
             if returningInto is not None:
-                ret = self._returningIntoMySQLpost(returningInto, varDict, cur)
+                #ret = self._returningIntoMySQLpost(returningInto, varDict, cur)
+                #Operate as select last_inserted_id for sequences
+                if seq_name == "" and not sql_update_returning:
+                    ret = self._returningIntoMySQLpost(returningInto, varDict, cur)
+                elif sql_update_returning: # perform a select to retrieve needed variables. Select is constructed from update.
+                    n = re.search("UPDATE ([^\s]+) SET ([^\s]+) WHERE", sql, re.I)
+                    if n is not None:
+                        sql_update_returning = " SELECT %s FROM %s WHERE" % (returningInto[0]['returning'], n.group(1)) + sql.replace(n.group(0), "")
+                    ret1 = self.cur.execute(sql_update_returning, newVarDict)
+                    vs = returningInto[0]['into'].split(",")
+                    ret = self.cur.fetchone()
+                    for i in xrange(len(vs)):
+                        varDict[vs[i]] = long(ret[i])
+                    _logger.debug("VARDICT AFTER SELECT:" + str(varDict))
+                else:
+                    ret1 = self.cur.execute(" SELECT curval('%s') " % seq_name)
+                    ret, = self.cur.fetchone()
+
+                    try:
+                        varDict[returningInto[0]['into']] = long(ret)
+                        _logger.debug("manage sequence %s valued %s" % (seq_name,ret))
+                    except KeyError:
+                        pass
+
         return ret
 
 
