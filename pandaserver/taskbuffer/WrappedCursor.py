@@ -111,6 +111,7 @@ class WrappedCursor(object):
             #    sql = re.sub(m.group(0), '', sql)
             # Addressing sequence
             seq_name = ""
+            #if sql.startswith("INSERT")
             if "INSERT" in sql:
                 #sql = re.sub('[a-zA-Z\._]+\.nextval','NULL',sql)
                 tmpstr = re.search('[a-zA-Z0-9\._]+\.nextval',sql)
@@ -125,7 +126,7 @@ class WrappedCursor(object):
                     sql = re.sub(m.group(0), '', sql)
 
             sql_update_returning = False
-
+            #if sql.startswith("UPDATE")
             if "UPDATE" in sql:
                 m = re.search("RETURNING ([^\s]+) INTO ([^\s]+)", sql, re.I)
                 if m is not None:
