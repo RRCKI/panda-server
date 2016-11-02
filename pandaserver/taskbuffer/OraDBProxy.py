@@ -367,7 +367,8 @@ class DBProxy:
                     sql = " INSERT INTO ATLAS_PANDA.JOBSDEFINED4_PANDAID_SEQ (col) VALUES (NULL) "
                     self.cur.arraysize = 10
                     self.cur.execute(sql + comment, {})
-                    sql2 = """ SELECT LAST_INSERT_ID() """
+                    #sql2 = """ SELECT LAST_INSERT_ID() """
+                    sql2 = " SELECT ATLAS_PANDA.curval('jobsdefined4_pandaid_seq') "
                     self.cur.execute(sql2 + comment, {})
                     job.jobsetID, = self.cur.fetchone()
             # check input
@@ -6327,7 +6328,8 @@ class DBProxy:
                 sql = " INSERT INTO ATLAS_PANDA.SUBCOUNTER_SUBID_SEQ (col) VALUES (NULL) "
                 self.cur.arraysize = 100
                 self.cur.execute(sql + comment, {})
-                sql2 = """ SELECT LAST_INSERT_ID() """
+                #sql2 = """ SELECT LAST_INSERT_ID() """
+                sql2 = " SELECT ATLAS_PANDA.curval('subcounter_subid_seq') "
                 self.cur.execute(sql2 + comment, {})
                 sn, = self.cur.fetchone()
             # commit
@@ -6364,7 +6366,8 @@ class DBProxy:
                 sql = " INSERT INTO ATLAS_PANDA.GROUP_JOBID_SEQ (col) VALUES (NULL) "
                 self.cur.arraysize = 100
                 self.cur.execute(sql + comment, {})
-                sql2 = """ SELECT LAST_INSERT_ID() """
+                #sql2 = """ SELECT LAST_INSERT_ID() """
+                sql2 = " SELECT ATLAS_PANDA.curval('group_jobid_seq') "
                 self.cur.execute(sql2 + comment, {})
                 sn, = self.cur.fetchone()
             # commit
@@ -13138,7 +13141,8 @@ class DBProxy:
                 sql = " INSERT INTO PRODSYS2_TASK_ID_SEQ (col) VALUES (NULL) "
                 self.cur.arraysize = 100
                 self.cur.execute(sql + comment, {})
-                sql2 = """ SELECT LAST_INSERT_ID() """
+                #sql2 = """ SELECT LAST_INSERT_ID() """
+                sql2 = " SELECT ATLAS_PANDA.curval('prodsys2_task_id_seq') "
                 self.cur.execute(sql2 + comment, {})
                 nextval, = self.cur.fetchone()
                 sqlT += "( :nextval ,".format(schemaDEFT)
