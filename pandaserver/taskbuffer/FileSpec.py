@@ -171,12 +171,14 @@ class FileSpec(object):
         ret = "VALUES("
         for attr in cls._attributes:
             if useSeq and cls._seqAttrMap.has_key(attr):
-                if panda_config.backend == 'mysql':
-                    # mysql
-                    ret += "%s," % "NULL"
-                else:
-                    # oracle
-                    ret += "%s," % cls._seqAttrMap[attr]
+                #if panda_config.backend == 'mysql':
+                #    # mysql
+                #    ret += "%s," % "NULL"
+                #else:
+                #    # oracle
+                #    ret += "%s," % cls._seqAttrMap[attr]
+                #Back to the sequence for MySQL
+                ret += "%s," % cls._seqAttrMap[attr]
             else:
                 ret += ":%s," % attr
         ret = ret[:-1]
