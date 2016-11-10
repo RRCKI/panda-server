@@ -1,6 +1,6 @@
 -- MySQL dump 10.13  Distrib 5.1.73, for redhat-linux-gnu (x86_64)
 --
--- Host: 192.168.23.42    Database: pandadbat
+-- Host: localhost    Database: pandadbat
 -- ------------------------------------------------------
 -- Server version	5.1.73
 
@@ -225,7 +225,6 @@ CREATE TABLE `cloudconfig` (
 
 LOCK TABLES `cloudconfig` WRITE;
 /*!40000 ALTER TABLE `cloudconfig` DISABLE KEYS */;
-INSERT INTO `cloudconfig` VALUES ('CA','Canada','TRIUMF','TRIUMF-LCG2_DATADISK,TRIUMF-LCG2_DATATAPE,TRIUMF-LCG2_MCTAPE,TRIUMF-LCG2_HOTDISK,TRIUMF-LCG2_PHYS-*,TRIUMF-LCG2_PERF-*',NULL,1000000,'pandasrv.usatlas.bnl.gov','online',4,3,0,'elog.21525',0,'JaroslavaSchovancova','2011-03-03 21:00:00','true',5,'ca','true',3000,NULL,'Bryan L Caron,Bryan Caron,Asoka De Silva,Leslie Groer','caron@triumf.ca,desilva@triumf.ca,groer@physics.utoronto.ca',NULL,0),('CERN','CERN','CERN-PROD','CERN-PROD_DATADISK,CERN-PROD_MCTAPE,CERN-PROD_DATATAPE,CERN-PROD_HOTDISK,CERN-PROD_DATAPREP,CERN-PROD_DET-*,CERN-PROD_PERF-*,CERN-PROD_PHYS-*,CERN-PROD_TRIG-*',NULL,1000000,'pandasrv.usatlas.bnl.gov','online',0,0,0,'elog.23156',0,'Jaroslava.Schovancova','2011-03-14 21:00:00',NULL,3,NULL,NULL,4000,NULL,'Armen Vartapetian','vartap@uta.edu',NULL,0),('DE','Germany','FZK-LCG2','FZK-LCG2_DATADISK,FZK-LCG2_MCTAPE,FZK-LCG2_DATATAPE,FZK-LCG2_HOTDISK,FZK-LCG2_PERF-*',NULL,5000,'pandasrv.usatlas.bnl.gov','online',2,1,0,NULL,0,NULL,'2011-04-12 20:00:00','true',13,'de,pl','true',4000,NULL,'Armen Vartapetian','vartap@uta.edu',NULL,0),('ES','Spain','pic','PIC_DATADISK,PIC_DATATAPE,PIC_MCTAPE,PIC_HOTDISK,PIC_PHYS-*',NULL,5000,'pandasrv.usatlas.bnl.gov','online',4,1,0,'none',0,NULL,'2011-03-22 21:00:00','true',5,'es','true',2000,NULL,'Armen Vartapetian','vartap@uta.edu',NULL,0),('FR','France','IN2P3-CC','IN2P3-CC_DATADISK,IN2P3-CC_MCTAPE,IN2P3-CC_DATATAPE,IN2P3-CC_HOTDISK,IN2P3-CC_PHYS-*,IN2P3-CC_PERF-*',NULL,1000000,'pandasrv.usatlas.bnl.gov','online',2,1,0,NULL,0,'StephaneJezequel','2011-02-07 21:00:00','true',15,'fr,cn,jp','true',3000,NULL,'Armen Vartapetian','vartap@uta.edu',NULL,0),('IT','Italy','INFN-T1','INFN-T1_DATADISK,INFN-T1_MCTAPE,INFN-T1_DATATAPE,INFN-T1_HOTDISK,INFN-T1_PHYS-*',NULL,1000000,'pandasrv.cern.ch','online',2,1,0,'elog.21525',0,'JaroslavaSchovancova','2011-01-25 21:00:00','true',5,'it','true',2000,NULL,'Armen Vartapetian','vartap@uta.edu',NULL,0),('ND','Nordic countries','ARC','NDGF-T1_DATADISK,NDGF-T1_DATATAPE,NDGF-T1_MCTAPE,NDGF-T1_HOTDISK,NDGF-T1_PHYS-*',NULL,-1,'pandasrv.usatlas.bnl.gov','online',2,1,0,'elog.23169',0,'Jaroslava.Schovancova','2011-03-14 21:00:00','true',5,NULL,'true',2000,'Andrej Filipcic','Armen Vartapetian','vartap@uta.edu',NULL,0),('NL','Netherlands','SARA-MATRIX','SARA-MATRIX_DATADISK,SARA-MATRIX_DATATAPE,SARA-MATRIX_MCTAPE,NIKHEF-ELPROD_DATADISK,SARA-MATRIX_HOTDISK,NIKHEF-ELPROD_DET-*,NIKHEF-ELPROD_PERF-*,NIKHEF-ELPROD_PHYS-*',NULL,10,'pandasrv.usatlas.bnl.gov','online',4,1,0,'elog.23497',0,'hclee','2011-03-21 21:00:00','true',15,'nl,ru','true',2000,NULL,'Armen Vartapetian','vartap@uta.edu',NULL,0),('OSG','Open Sciences Grid','BNL_ATLAS_1','BNLPANDA',NULL,0,'pandasrv.usatlas.bnl.gov','brokeroff',0,0,0,'Filler',0,'jcaballero','2010-06-14 20:00:00',NULL,0,'us',NULL,0,'Jose Caballero|Benjamin Timothy Allen Miller','Jose Caballero,Benjamin Timothy Allen Miller','potekhin@bnl.gov,jcaballero@bnl.gov',NULL,0),('RU','RussiaFederation','ANALY_RRC-KI-HPC','RRC_KI_T1_SCRATCHDISK',NULL,1,'vcloud29.grid.kiae.ru','online',4,1,0,'elog.23498',0,'mashinistov','2014-08-31 20:00:00',NULL,0,'ru','true',2000,NULL,'Ruslan Mashinistov','mashinistov@ki',NULL,0),('TW','Taiwan','Taiwan-LCG2','TAIWAN-LCG2_DATADISK,TAIWAN-LCG2_DATATAPE,TAIWAN-LCG2_MCTAPE,TAIWAN-LCG2_HOTDISK,TAIWAN-LCG2_PERF-*,TAIWAN-LCG2_PHYS-*',NULL,2,'pandasrv.usatlas.bnl.gov','online',4,3,0,'elog.23893',0,'iueda','2011-03-31 20:00:00',NULL,5,'tw,au',NULL,2000,NULL,'Armen Vartapetian','vartap@uta.edu',NULL,0),('UK','United Kingdom','RAL-LCG2','RAL-LCG2_DATADISK,RAL-LCG2_MCTAPE,RAL-LCG2_DATATAPE,RAL-LCG2_HOTDISK,RAL-LCG2_PERF-*,RAL-LCG2_PHYS-*',NULL,5000,'pandasrv.usatlas.bnl.gov','online',2,1,0,'https://savannah.cern.ch/support/index.php',0,'AlessandraForti','2011-03-29 20:00:00','true',10,'uk','true',2000,'peter love','graeme stewart,peter love','graeme.andrew.stewart@cern.ch,p.love@lancaster.ac.uk',NULL,0),('US','United States','BNL_CVMFS_1','BNL-OSG2_DATADISK,BNL-OSG2_DATATAPE,BNL-OSG2_MCTAPE,BNL-OSG2_HOTDISK,BNL-OSG2_DET-*,BNL-OSG2_PERF-*,BNL-OSG2_PHYS-*,BNL-OSG2_TRIG-*',NULL,2,'pandasrv.usatlas.bnl.gov','online',4,1,0,'elog.21524',0,'JaroslavaSchovancova','2011-03-30 20:00:00','true',25,'usatlas','true',12000,'Nurcan Ozturk|Jose Caballero|John R. Hover','Armen Vartapetian,Nurcan Ozturk,John R. Hover','vartap@uta.edu,nurcan@hepmail.uta.edu',NULL,0);
 /*!40000 ALTER TABLE `cloudconfig` ENABLE KEYS */;
 UNLOCK TABLES;
 
@@ -265,7 +264,7 @@ DROP TABLE IF EXISTS `cloudtasks`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `cloudtasks` (
-  `ID` int(11) NOT NULL AUTO_INCREMENT,
+  `ID` int(11) NOT NULL,
   `TASKNAME` varchar(128) DEFAULT NULL,
   `TASKID` int(11) DEFAULT NULL,
   `CLOUD` varchar(20) DEFAULT NULL,
@@ -350,6 +349,40 @@ LOCK TABLES `datasets` WRITE;
 UNLOCK TABLES;
 
 --
+-- Table structure for table `ddm_endpoint`
+--
+
+DROP TABLE IF EXISTS `ddm_endpoint`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `ddm_endpoint` (
+  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `DDM_ENDPOINT_NAME` varchar(52) DEFAULT NULL,
+  `SITE_NAME` varchar(52) DEFAULT NULL,
+  `DDM_SPACETOKEN_NAME` varchar(52) DEFAULT NULL,
+  `SPACE_TOTAL` int(11) DEFAULT NULL,
+  `SPACE_FREE` int(11) DEFAULT NULL,
+  `SPACE_USED` int(11) DEFAULT NULL,
+  `IS_TAPE` char(1) DEFAULT NULL,
+  `TYPE` varchar(20) DEFAULT NULL,
+  `BLACKLISTED` char(1) DEFAULT NULL,
+  `SPACE_EXPIRED` int(11) DEFAULT NULL,
+  `SPACE_TIMESTAMP` datetime DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `ddm_endpoint`
+--
+
+LOCK TABLES `ddm_endpoint` WRITE;
+/*!40000 ALTER TABLE `ddm_endpoint` DISABLE KEYS */;
+INSERT INTO `ddm_endpoint` VALUES (1,'RRC-KI-T1_SCRATCHDISK','RRC-KI-T1','ATLASSCRATCHDISK',97280,76906,20373,'N','SCRATCHDISK','N',15939,'2015-11-24 11:59:31');
+/*!40000 ALTER TABLE `ddm_endpoint` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `dslist`
 --
 
@@ -398,7 +431,7 @@ DROP TABLE IF EXISTS `filestable4`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `filestable4` (
-  `ROW_ID` bigint(20) NOT NULL AUTO_INCREMENT,
+  `ROW_ID` bigint(20) NOT NULL,
   `PANDAID` bigint(20) NOT NULL DEFAULT '0',
   `MODIFICATIONTIME` datetime NOT NULL DEFAULT '1970-01-01 00:00:00',
   `GUID` varchar(64) DEFAULT NULL,
@@ -1157,7 +1190,7 @@ CREATE TABLE `jedi_tasks` (
   `NUMTHROTTLED` tinyint(4) DEFAULT NULL,
   `MERGECORECOUNT` int(11) DEFAULT NULL,
   `GOAL` tinyint DEFAULT NULL,
-  `ASSESSMENTTIME` datetime, 
+  `ASSESSMENTTIME` datetime,
   `CPUTIME` int DEFAULT NULL,
   `CPUTIMEUNIT` varchar(32) DEFAULT NULL,
   `CPUEFFICIENCY` tinyint DEFAULT NULL,
@@ -1451,8 +1484,8 @@ CREATE TABLE `jobsactive4` (
   `JOBSUBSTATUS` varchar(80) DEFAULT NULL,
   `ACTUALCORECOUNT` int(11) DEFAULT NULL,
   `REQID` int(11) DEFAULT NULL,
-  `MAXRSS` int(11) DEFAULT NULL, 
-  `MAXVMEM` int(11) DEFAULT NULL,  
+  `MAXRSS` int(11) DEFAULT NULL,
+  `MAXVMEM` int(11) DEFAULT NULL,
   `MAXSWAP` int(11) DEFAULT NULL,
   `MAXPSS` int(11) DEFAULT NULL,
   `AVGRSS` int(11) DEFAULT NULL,
@@ -1590,8 +1623,8 @@ CREATE TABLE `jobsarchived` (
   `JOBSUBSTATUS` varchar(80) DEFAULT NULL,
   `ACTUALCORECOUNT` int(11) DEFAULT NULL,
   `REQID` int(11) DEFAULT NULL,
-  `MAXRSS` int(11) DEFAULT NULL, 
-  `MAXVMEM` int(11) DEFAULT NULL,  
+  `MAXRSS` int(11) DEFAULT NULL,
+  `MAXVMEM` int(11) DEFAULT NULL,
   `MAXSWAP` int(11) DEFAULT NULL,
   `MAXPSS` int(11) DEFAULT NULL,
   `AVGRSS` int(11) DEFAULT NULL,
@@ -1725,8 +1758,8 @@ CREATE TABLE `jobsarchived4` (
   `JOBSUBSTATUS` varchar(80) DEFAULT NULL,
   `ACTUALCORECOUNT` int(11) DEFAULT NULL,
   `REQID` int(11) DEFAULT NULL,
-  `MAXRSS` int(11) DEFAULT NULL, 
-  `MAXVMEM` int(11) DEFAULT NULL,  
+  `MAXRSS` int(11) DEFAULT NULL,
+  `MAXVMEM` int(11) DEFAULT NULL,
   `MAXSWAP` int(11) DEFAULT NULL,
   `MAXPSS` int(11) DEFAULT NULL,
   `AVGRSS` int(11) DEFAULT NULL,
@@ -1798,7 +1831,7 @@ DROP TABLE IF EXISTS `jobsdefined4`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!40101 SET character_set_client = utf8 */;
 CREATE TABLE `jobsdefined4` (
-  `PANDAID` bigint(20) NOT NULL AUTO_INCREMENT,
+  `PANDAID` bigint(20) NOT NULL,
   `JOBDEFINITIONID` bigint(20) NOT NULL DEFAULT '0',
   `SCHEDULERID` varchar(128) DEFAULT NULL,
   `PILOTID` varchar(200) DEFAULT NULL,
@@ -1891,8 +1924,8 @@ CREATE TABLE `jobsdefined4` (
   `JOBSUBSTATUS` varchar(80) DEFAULT NULL,
   `ACTUALCORECOUNT` int(11) DEFAULT NULL,
   `REQID` int(11) DEFAULT NULL,
-  `MAXRSS` int(11) DEFAULT NULL, 
-  `MAXVMEM` int(11) DEFAULT NULL,  
+  `MAXRSS` int(11) DEFAULT NULL,
+  `MAXVMEM` int(11) DEFAULT NULL,
   `MAXSWAP` int(11) DEFAULT NULL,
   `MAXPSS` int(11) DEFAULT NULL,
   `AVGRSS` int(11) DEFAULT NULL,
@@ -1923,6 +1956,26 @@ LOCK TABLES `jobsdefined4` WRITE;
 /*!40000 ALTER TABLE `jobsdefined4` DISABLE KEYS */;
 /*!40000 ALTER TABLE `jobsdefined4` ENABLE KEYS */;
 UNLOCK TABLES;
+
+--
+-- Table structure for table `jobsdefined4_pandaid_seq`
+--
+
+DROP TABLE IF EXISTS `jobsdefined4_pandaid_seq`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `jobsdefined4_pandaid_seq` (
+  `id` bigint(20) NOT NULL AUTO_INCREMENT,
+  `col` bit(1) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `jobsdefined4_pandaid_seq`
+--
+
+
 
 --
 -- Table structure for table `jobswaiting4`
@@ -2025,8 +2078,8 @@ CREATE TABLE `jobswaiting4` (
   `JOBSUBSTATUS` varchar(80) DEFAULT NULL,
   `ACTUALCORECOUNT` int(11) DEFAULT NULL,
   `REQID` int(11) DEFAULT NULL,
-  `MAXRSS` int(11) DEFAULT NULL, 
-  `MAXVMEM` int(11) DEFAULT NULL,  
+  `MAXRSS` int(11) DEFAULT NULL,
+  `MAXVMEM` int(11) DEFAULT NULL,
   `MAXSWAP` int(11) DEFAULT NULL,
   `MAXPSS` int(11) DEFAULT NULL,
   `AVGRSS` int(11) DEFAULT NULL,
@@ -2215,6 +2268,56 @@ CREATE TABLE `mv_jobsactive4_stats` (
 LOCK TABLES `mv_jobsactive4_stats` WRITE;
 /*!40000 ALTER TABLE `mv_jobsactive4_stats` DISABLE KEYS */;
 /*!40000 ALTER TABLE `mv_jobsactive4_stats` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `panda_ddm_relation`
+--
+
+DROP TABLE IF EXISTS `panda_ddm_relation`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `panda_ddm_relation` (
+  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `PANDA_SITE_NAME` varchar(52) DEFAULT NULL,
+  `DDM_ENDPOINT_NAME` varchar(52) DEFAULT NULL,
+  `IS_LOCAL` char(1) DEFAULT NULL,
+  `IS_DEFAULT` char(1) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `panda_ddm_relation`
+--
+
+LOCK TABLES `panda_ddm_relation` WRITE;
+/*!40000 ALTER TABLE `panda_ddm_relation` DISABLE KEYS */;
+/*!40000 ALTER TABLE `panda_ddm_relation` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `panda_site`
+--
+
+DROP TABLE IF EXISTS `panda_site`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `panda_site` (
+  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `PANDA_SITE_NAME` varchar(52) DEFAULT NULL,
+  `SITE_NAME` varchar(52) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=2 DEFAULT CHARSET=utf8;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `panda_site`
+--
+
+LOCK TABLES `panda_site` WRITE;
+/*!40000 ALTER TABLE `panda_site` DISABLE KEYS */;
+/*!40000 ALTER TABLE `panda_site` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -2548,6 +2651,34 @@ LOCK TABLES `pilottype` WRITE;
 UNLOCK TABLES;
 
 --
+-- Table structure for table `prodsys_comm`
+--
+
+DROP TABLE IF EXISTS `prodsys_comm`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `prodsys_comm` (
+  `comm_task` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `comm_meta` int(12) DEFAULT NULL,
+  `comm_owner` varchar(16) DEFAULT NULL,
+  `comm_cmd` varchar(256) DEFAULT NULL,
+  `comm_ts` int(12) DEFAULT NULL,
+  `comm_comment` varchar(128) DEFAULT NULL,
+  `comm_parameters` text,
+  PRIMARY KEY (`comm_task`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `prodsys_comm`
+--
+
+LOCK TABLES `prodsys_comm` WRITE;
+/*!40000 ALTER TABLE `prodsys_comm` DISABLE KEYS */;
+/*!40000 ALTER TABLE `prodsys_comm` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `productiondatasets`
 --
 
@@ -2644,6 +2775,64 @@ CREATE TABLE `redirect` (
 LOCK TABLES `redirect` WRITE;
 /*!40000 ALTER TABLE `redirect` DISABLE KEYS */;
 /*!40000 ALTER TABLE `redirect` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `retryactions`
+--
+
+DROP TABLE IF EXISTS `retryactions`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `retryactions` (
+  `RETRYACTION_ID` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `RETRY_ACTION` varchar(50) DEFAULT NULL,
+  `ACTIVE` char(1) NOT NULL DEFAULT 'Y',
+  `RETRY_DESCRIPTION` varchar(250) DEFAULT NULL,
+  PRIMARY KEY (`RETRYACTION_ID`)
+) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `retryactions`
+--
+
+LOCK TABLES `retryactions` WRITE;
+/*!40000 ALTER TABLE `retryactions` DISABLE KEYS */;
+/*!40000 ALTER TABLE `retryactions` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `retryerrors`
+--
+
+DROP TABLE IF EXISTS `retryerrors`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `retryerrors` (
+  `RETRYERROR_ID` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `ERRORSOURCE` varchar(255) DEFAULT NULL,
+  `ERRORCODE` int(11) DEFAULT NULL,
+  `ACTIVE` char(1) DEFAULT 'Y',
+  `RETRYACTION` int(11) DEFAULT NULL,
+  `ERRORDIAG` varchar(255) DEFAULT NULL,
+  `PARAMETERS` varchar(256) DEFAULT NULL,
+  `ARCHITECTURE` varchar(256) DEFAULT NULL,
+  `RELEASE` varchar(64) DEFAULT NULL,
+  `WORKQUEUE_ID` int(5) DEFAULT NULL,
+  `DESCRIPTION` varchar(250) DEFAULT NULL,
+  `EXPIRATION_DATE` datetime DEFAULT NULL,
+  PRIMARY KEY (`RETRYERROR_ID`)
+) ENGINE=InnoDB AUTO_INCREMENT=9 DEFAULT CHARSET=utf8;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `retryerrors`
+--
+
+LOCK TABLES `retryerrors` WRITE;
+/*!40000 ALTER TABLE `retryerrors` DISABLE KEYS */;
+/*!40000 ALTER TABLE `retryerrors` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -3093,6 +3282,33 @@ LOCK TABLES `schedinstance` WRITE;
 UNLOCK TABLES;
 
 --
+-- Table structure for table `sequence`
+--
+
+DROP TABLE IF EXISTS `sequence`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `sequence` (
+  `name` varchar(100) NOT NULL,
+  `increment` int(11) NOT NULL DEFAULT '1',
+  `min_value` int(11) NOT NULL DEFAULT '1',
+  `max_value` bigint(20) NOT NULL DEFAULT '9223372036854775807',
+  `cur_value` bigint(20) DEFAULT '1',
+  `cycle` tinyint(1) NOT NULL DEFAULT '0',
+  PRIMARY KEY (`name`)
+) ENGINE=MyISAM DEFAULT CHARSET=latin1;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `sequence`
+--
+
+LOCK TABLES `sequence` WRITE;
+/*!40000 ALTER TABLE `sequence` DISABLE KEYS */;
+/*!40000 ALTER TABLE `sequence` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
 -- Table structure for table `servicelist`
 --
 
@@ -3136,6 +3352,32 @@ CREATE TABLE `servicelist` (
 LOCK TABLES `servicelist` WRITE;
 /*!40000 ALTER TABLE `servicelist` DISABLE KEYS */;
 /*!40000 ALTER TABLE `servicelist` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `site`
+--
+
+DROP TABLE IF EXISTS `site`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `site` (
+  `id` int(11) unsigned NOT NULL AUTO_INCREMENT,
+  `SITE_NAME` varchar(52) DEFAULT NULL,
+  `ROLE` varchar(256) DEFAULT NULL,
+  `TIER_LEVEL` int(1) DEFAULT NULL,
+  `STATE` varchar(52) DEFAULT NULL,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB AUTO_INCREMENT=3 DEFAULT CHARSET=utf8;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `site`
+--
+
+LOCK TABLES `site` WRITE;
+/*!40000 ALTER TABLE `site` DISABLE KEYS */;
+/*!40000 ALTER TABLE `site` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -3557,6 +3799,45 @@ CREATE TABLE `t_m4regions_replication` (
 LOCK TABLES `t_m4regions_replication` WRITE;
 /*!40000 ALTER TABLE `t_m4regions_replication` DISABLE KEYS */;
 /*!40000 ALTER TABLE `t_m4regions_replication` ENABLE KEYS */;
+UNLOCK TABLES;
+
+--
+-- Table structure for table `t_task`
+--
+
+DROP TABLE IF EXISTS `t_task`;
+/*!40101 SET @saved_cs_client     = @@character_set_client */;
+/*!40101 SET character_set_client = utf8 */;
+CREATE TABLE `t_task` (
+  `taskid` int(12) unsigned NOT NULL AUTO_INCREMENT,
+  `parent_tid` int(12) DEFAULT NULL,
+  `status` varchar(12) DEFAULT NULL,
+  `total_done_jobs` int(10) DEFAULT NULL,
+  `submit_time` datetime DEFAULT NULL,
+  `start_time` datetime DEFAULT NULL,
+  `timestamp` datetime DEFAULT NULL,
+  `vo` varchar(16) DEFAULT NULL,
+  `prodsourcelabel` varchar(20) DEFAULT NULL,
+  `taskname` varchar(256) DEFAULT NULL,
+  `username` varchar(128) DEFAULT NULL,
+  `priority` int(5) DEFAULT NULL,
+  `current_priority` int(5) DEFAULT NULL,
+  `total_req_jobs` int(10) DEFAULT NULL,
+  `chain_tid` int(12) DEFAULT NULL,
+  `total_events` int(10) DEFAULT NULL,
+  `jedi_task_parameters` text,
+  `total_input_events` int(10) DEFAULT NULL,
+  PRIMARY KEY (`taskid`)
+) ENGINE=InnoDB AUTO_INCREMENT=105 DEFAULT CHARSET=utf8;
+/*!40101 SET character_set_client = @saved_cs_client */;
+
+--
+-- Dumping data for table `t_task`
+--
+
+LOCK TABLES `t_task` WRITE;
+/*!40000 ALTER TABLE `t_task` DISABLE KEYS */;
+/*!40000 ALTER TABLE `t_task` ENABLE KEYS */;
 UNLOCK TABLES;
 
 --
@@ -5645,7 +5926,7 @@ UNLOCK TABLES;
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2015-04-20 13:30:14
+-- Dump completed on 2016-01-27 16:55:59
 
 ----------------------------- ---------------------------
 --  Stored procedure migrated to MySQL - 11.09.2015 by Ruslan Mashinistov
