@@ -7,9 +7,9 @@ import re
 
 class SiteSpec(object):
     # attributes
-    _attributes = ('sitename','nickname','dq2url','cloud','ddm','lfchost','se','type','gatekeeper',
+    _attributes = ('sitename','nickname','dq2url','cloud','ddm','lfchost','type','gatekeeper',
                    'releases','memory','maxtime','status','space','retry','cmtconfig','setokens',
-                   'seprodpath','glexec','priorityoffset','allowedgroups','defaulttoken','queue',
+                   'glexec','priorityoffset','allowedgroups','defaulttoken','queue',
                    'localqueue','validatedreleases','accesscontrol','copysetup','maxinputsize',
                    'cachedse','allowdirectaccess','comment','cloudlist','statusmodtime','lfcregister',
                    'countryGroup','availableCPU','pledgedCPU','coreCount','reliabilityLevel',
@@ -17,7 +17,8 @@ class SiteSpec(object):
                    'mintime','allowfax','wansourcelimit','wansinklimit','pandasite',
                    'sitershare','cloudrshare','corepower','wnconnectivity','catchall',
                    'role','pandasite_state','ddm_endpoints','maxrss','minrss',
-                   'direct_access_lan','direct_access_wan','tier')
+                   'direct_access_lan','direct_access_wan','tier','objectstores','is_unified',
+                   'unified_name')
 
     # constructor
     def __init__(self):
@@ -125,3 +126,26 @@ class SiteSpec(object):
     # use jumbo jobs
     def useJumboJobs(self):
         return self.hasValueInCatchall('useJumboJobs')
+        
+
+
+    # get unified name
+    def get_unified_name(self):
+        if self.unified_name is None:
+            return self.sitename
+        return self.unified_name
+
+
+
+    # get number of simulated events for dynamic number of events
+    def get_n_sim_events(self):
+        tmpVal = self.getValueFromCatchall('nSimEvents')
+        if tmpVal is None:
+            return None
+        return int(tmpVal)
+
+
+
+    # check if opportunistic
+    def is_opportunistic(self):
+        return self.pledgedCPU == -1

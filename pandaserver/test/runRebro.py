@@ -11,19 +11,14 @@ import datetime
 import commands
 import threading
 import userinterface.Client as Client
-from dataservice.DDM import ddm
-from dataservice.DDM import dashBorad
 from taskbuffer.OraDBProxy import DBProxy
 from taskbuffer.TaskBuffer import taskBuffer
 from pandalogger.PandaLogger import PandaLogger
 from jobdispatcher.Watcher import Watcher
 from brokerage.SiteMapper import SiteMapper
-from dataservice.Adder import Adder
 from dataservice.Finisher import Finisher
 from dataservice.MailUtils import MailUtils
 from taskbuffer import ProcessGroups
-import brokerage.broker_util
-import brokerage.broker
 import taskbuffer.ErrorCode
 import dataservice.DDM
 
@@ -109,13 +104,20 @@ _memoryCheck("rebroker")
 
 # rebrokerage
 _logger.debug("Rebrokerage start")
+
+# get timeout value
+timeoutVal = taskBuffer.getConfigValue('rebroker','ANALY_TIMEOUT')
+if timeoutVal is None:
+    timeoutVal = 12
+_logger.debug("timeout value : {0}h".format(timeoutVal))    
 try:
-    normalTimeLimit = datetime.datetime.utcnow() - datetime.timedelta(hours=24)
+    normalTimeLimit = datetime.datetime.utcnow() - datetime.timedelta(hours=timeoutVal)
     sortTimeLimit   = datetime.datetime.utcnow() - datetime.timedelta(hours=3)
     sql  = "SELECT jobDefinitionID,prodUserName,prodUserID,computingSite,MAX(modificationTime),jediTaskID,processingType "
     sql += "FROM ATLAS_PANDA.jobsActive4 "
-    sql += "WHERE prodSourceLabel IN (:prodSourceLabel1,:prodSourceLabel2) AND jobStatus IN (:jobStatus1,:jobStatus2) "
-    sql += "AND modificationTime<:modificationTime "
+    sql += "WHERE prodSourceLabel IN (:prodSourceLabel1,:prodSourceLabel2) "
+    sql += "AND ((jobStatus IN (:jobStatus1,:jobStatus2) AND modificationTime<:modificationTime) "
+    sql += "OR (jobStatus IN (:jobStatus3) AND stateChangeTime<:modificationTime)) "
     sql += "AND jobsetID IS NOT NULL "    
     sql += "AND lockedBy=:lockedBy "
     sql += "GROUP BY jobDefinitionID,prodUserName,prodUserID,computingSite,jediTaskID,processingType " 
@@ -126,6 +128,7 @@ try:
     varMap[':lockedBy']         = 'jedi'
     varMap[':jobStatus1']       = 'activated'
     varMap[':jobStatus2']       = 'throttled'
+    varMap[':jobStatus3']       = 'starting'
     # get jobs older than threshold
     ret,res = taskBuffer.querySQLS(sql, varMap)
     resList = []
@@ -161,13 +164,13 @@ try:
     sql  = "SELECT PandaID,modificationTime FROM %s "
     sql += "WHERE prodUserName=:prodUserName AND jobDefinitionID=:jobDefinitionID "
     sql += "AND computingSite=:computingSite AND jediTaskID=:jediTaskID "
-    sql += "AND modificationTime>:modificationTime AND rownum <= 1"
+    sql += "AND modificationTime>:modificationTime AND NOT jobStatus IN (:jobStatus1) "
+    sql += "AND rownum <= 1"
     # sql to get associated jobs with jediTaskID
     sqlJJ  = "SELECT PandaID FROM %s "
-    sqlJJ += "WHERE jediTaskID=:jediTaskID AND jobStatus IN (:jobS1,:jobS2,:jobS3,:jobS4) "
+    sqlJJ += "WHERE jediTaskID=:jediTaskID AND jobStatus IN (:jobS1,:jobS2,:jobS3,:jobS4,:jobS5) "
     sqlJJ += "AND jobDefinitionID=:jobDefID AND computingSite=:computingSite "
     if resList != []:
-        from userinterface.ReBroker import ReBroker
         recentRuntimeLimit = datetime.datetime.utcnow() - datetime.timedelta(hours=3)
         # loop over all user/jobID combinations
         iComb = 0
@@ -188,6 +191,7 @@ try:
             varMap[':prodUserName']     = prodUserName
             varMap[':jobDefinitionID']  = jobDefinitionID
             varMap[':modificationTime'] = recentRuntimeLimit
+            varMap[':jobStatus1']       = 'starting'
             _logger.debug(" rebro:%s/%s:ID=%s:%s jediTaskID=%s site=%s" % (iComb,nComb,jobDefinitionID,
                                                                            prodUserName,jediTaskID,
                                                                            computingSite))
@@ -221,19 +225,7 @@ try:
                 continue
             else:
                 if jediTaskID == None:
-                    _logger.debug("    -> rebro for normal task")
-                    reBroker = ReBroker(taskBuffer)
-                    # try to lock
-                    rebRet,rebOut = reBroker.lockJob(prodUserID,jobDefinitionID)
-                    if not rebRet:
-                        # failed to lock
-                        _logger.debug("    -> failed to lock : %s" % rebOut)
-                        continue
-                    else:
-                        # start
-                        _logger.debug("    -> start")
-                        reBroker.start()
-                        reBroker.join()
+                    _logger.debug("    -> rebro for normal task : no action")
                 else:
                     _logger.debug("    -> rebro for JEDI task")
                     killJobs = []
@@ -245,6 +237,7 @@ try:
                     varMap[':jobS2'] = 'assigned'
                     varMap[':jobS3'] = 'activated'
                     varMap[':jobS4'] = 'throttled'
+                    varMap[':jobS5'] = 'starting'
                     for tableName in ['ATLAS_PANDA.jobsDefined4','ATLAS_PANDA.jobsActive4']:
                         retJJ,resJJ = taskBuffer.querySQLS(sqlJJ % tableName, varMap)
                         for tmpPandaID, in resJJ:

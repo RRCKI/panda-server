@@ -2,7 +2,6 @@ import re
 import sys
 import json
 import urllib
-from proxycache import panda_proxy_cache
 from taskbuffer import EventServiceUtils
 from dataservice import DataServiceUtils
 
@@ -29,6 +28,8 @@ SC_Role      = 60
 SC_Perms     = 70
 # key missing
 SC_MissKey   = 80
+# failure of proxy retrieval
+SC_ProxyError = 90
 
 
 # response
@@ -241,9 +242,16 @@ class Response:
         else:
             self.data['taskID'] = job.taskID
         # core count
-        self.data['coreCount'] = job.coreCount
+        if job.coreCount in ['NULL', None]:
+            self.data['coreCount'] = 1
+        else:
+            self.data['coreCount'] = job.coreCount
         # jobsetID
         self.data['jobsetID'] = job.jobsetID
+        # nucleus
+        self.data['nucleus'] = job.nucleus
+        # walltime
+        self.data['maxWalltime'] = job.maxWalltime
         # debug mode
         if job.specialHandling != None and 'debug' in job.specialHandling:
             self.data['debug'] = 'True'
@@ -293,6 +301,13 @@ class Response:
         # log to OS
         if job.putLogToOS():
             self.data['putLogToOS'] = 'True'
+        # suppress execute string conversion
+        if job.noExecStrCnv():
+            self.data['noExecStrCnv'] = 'True'
+        # in-file positional event number
+        if job.inFilePosEvtNum():
+            self.data['inFilePosEvtNum'] = 'True'
+
 
 
     # set proxy key
@@ -303,27 +318,6 @@ class Response:
                 self.data[name] = proxyKey[name]
             else:
                 self.data[name] = ''
-
-
-    # set user proxy
-    def setUserProxy(self,realDN=None,role=None):
-        try:
-            if realDN == None:
-                # remove redundant extensions
-                realDN = self.data['prodUserID']
-                realDN = re.sub('/CN=limited proxy','',realDN)
-                realDN = re.sub('(/CN=proxy)+','',realDN)
-            pIF = panda_proxy_cache.MyProxyInterface()
-            tmpOut = pIF.retrieve(realDN,role=role)
-            # not found
-            if tmpOut == None:
-                return False,'proxy not found for {0}'.format(realDN)
-            # set
-            self.data['userProxy'] = tmpOut
-            return True,''
-        except:
-            errtype,errvalue = sys.exc_info()[:2]
-            return False,"proxy retrieval failed with {0} {1}".format(errtype.__name__,errvalue)
 
 
     # set secret key for panda proxy

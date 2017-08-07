@@ -15,27 +15,11 @@ import exceptions
 import traceback
 import xml.dom.minidom
 import ErrorCode
-from dq2.clientapi import DQ2
-from dq2.filecatalog.FileCatalogUnknownFactory import FileCatalogUnknownFactory
-from dq2.filecatalog.FileCatalogException import FileCatalogException
 from rucio.common.exception import FileConsistencyMismatch,DataIdentifierNotFound,UnsupportedOperation,\
     InvalidPath,RSENotFound,InsufficientAccountLimit,RSEProtocolNotSupported
 
-from DDM import rucioAPI,dq2Common,dq2Info
+from DDM import rucioAPI
 
-try:
-    from dq2.clientapi.cli import Register2
-except:
-    pass
-try:
-    from dq2.filecatalog.rucio.RucioFileCatalogException import RucioFileCatalogException
-except:
-    # dummy class
-    class RucioFileCatalogException:
-        pass
-
-
-import brokerage.broker_util
 from config import panda_config
 from pandalogger.PandaLogger import PandaLogger
 from AdderPluginBase import AdderPluginBase
@@ -55,7 +39,6 @@ class AdderAtlasPlugin (AdderPluginBase):
         self.goToTransferring = False
         self.logTransferring = False
         self.subscriptionMap = {}
-        self.dq2api = None
         self.pandaDDM = False
         self.goToMerging = False
 
@@ -68,11 +51,6 @@ class AdderAtlasPlugin (AdderPluginBase):
             self.ddmBackEnd = self.job.getDdmBackEnd()
             if self.ddmBackEnd == None:
                 self.ddmBackEnd = 'rucio'
-            # instantiate DQ2
-            if self.ddmBackEnd != None:
-                self.dq2api = DQ2.DQ2(force_backend=self.ddmBackEnd)
-            else:
-                self.dq2api = DQ2.DQ2()
             self.logger.debug("ddm backend = {0}".format(self.ddmBackEnd))
             # add files only to top-level datasets for transferring jobs
             if self.job.jobStatus == 'transferring':
@@ -85,18 +63,17 @@ class AdderAtlasPlugin (AdderPluginBase):
             if self.job.produceUnMerge():
                 self.goToMerging = True
             # check if the job should go to trasnferring
-            tmpSrcDDM = self.siteMapper.getSite(self.job.computingSite).ddm
-            tmpSrcSEs = brokerage.broker_util.getSEfromSched(self.siteMapper.getSite(self.job.computingSite).se)
+            srcSiteSpec = self.siteMapper.getSite(self.job.computingSite)
+            tmpSrcDDM = srcSiteSpec.ddm
             destSEwasSet = False
             brokenSched = False
             if self.job.prodSourceLabel == 'user' and not self.siteMapper.siteSpecList.has_key(self.job.destinationSE):
                 # DQ2 ID was set by using --destSE for analysis job to transfer output
                 destSEwasSet = True
                 tmpDstDDM = self.job.destinationSE
-                tmpDstSEs = self.job.destinationSE
             else:
-                tmpDstDDM = self.siteMapper.getSite(self.job.destinationSE).ddm
-                tmpDstSEs = brokerage.broker_util.getSEfromSched(self.siteMapper.getSite(self.job.destinationSE).se)
+                dstSiteSpec = self.siteMapper.getSite(self.job.destinationSE)
+                tmpDstDDM = dstSiteSpec.ddm
                 # protection against disappearance of dest from schedconfig
                 if not self.siteMapper.checkSite(self.job.destinationSE) and self.job.destinationSE != 'local':
                     self.job.ddmErrorCode = ErrorCode.EC_Adder
@@ -123,7 +100,6 @@ class AdderAtlasPlugin (AdderPluginBase):
                         somethingToTranfer = True
                         break
             self.logger.debug('DDM src:%s dst:%s' % (tmpSrcDDM,tmpDstDDM))
-            self.logger.debug('SE src:%s dst:%s' % (tmpSrcSEs,tmpDstSEs))
             if re.search('^ANALY_',self.job.computingSite) != None:
                 # analysis site
                 pass
@@ -132,9 +108,6 @@ class AdderAtlasPlugin (AdderPluginBase):
                 pass
             elif tmpSrcDDM == tmpDstDDM:
                 # same DQ2ID for src/dest
-                pass
-            elif tmpSrcSEs == tmpDstSEs:
-                # same SEs
                 pass
             elif self.addToTopOnly:
                 # already in transferring
@@ -164,20 +137,14 @@ class AdderAtlasPlugin (AdderPluginBase):
             if retOut != 0:
                 self.logger.debug('terminated when adding')
                 return
-            # remove unmerged
-            if self.job.processingType == 'usermerge' and self.job.prodSourceLabel == 'user' and \
-                   self.jobStatus == 'finished' and self.job.ddmErrorDiag == 'NULL':
-                retMerge = self._removeUnmerged()
-                # failed
-                if not retMerge:
-                    self.logger.debug('terminated when removing unmerged')
-                    return
             # succeeded    
             self.result.setSucceeded()    
             self.logger.debug("end plugin")
         except:
-            type, value, traceBack = sys.exc_info()
-            self.logger.debug(": %s %s" % (type,value))
+            errtype,errvalue = sys.exc_info()[:2]
+            errStr = "execute() : %s %s" % (errtype,errvalue)
+            errStr += traceback.format_exc()
+            self.logger.debug(errStr)
             # set fatal error code
             self.result.setFatal()
         # return
@@ -195,6 +162,8 @@ class AdderAtlasPlugin (AdderPluginBase):
             tmpRet = self.taskBuffer.getTaskAttributesPanda(self.job.jediTaskID,['campaign'])
             if 'campaign' in tmpRet:
                 campaign = tmpRet['campaign']
+        # zip file map
+        zipFileMap = self.job.getZipFileMap()
         # check files
         idMap = {}
         fileList = []
@@ -202,6 +171,8 @@ class AdderAtlasPlugin (AdderPluginBase):
         dsDestMap = {}
         distDSs = set()
         osDsFileMap = {}
+        zipFiles = {}
+        contZipMap = {}
         for file in self.job.Files:
             if file.type == 'output' or file.type == 'log':
                 # append to fileList
@@ -216,7 +187,38 @@ class AdderAtlasPlugin (AdderPluginBase):
                 # skip no output or failed
                 if file.status in ['nooutput','failed']:
                     continue
+                # check if zip file
+                if file.lfn in zipFileMap:
+                    isZipFile = True
+                    if not file.lfn in zipFiles and not self.addToTopOnly:
+                        zipFiles[file.lfn] = dict()
+                else:
+                    isZipFile = False
+                # skip zip files wjen topOnly
+                if self.addToTopOnly and isZipFile:
+                    continue
+                # check if zip content
+                zipFileName = None
+                if not isZipFile and not self.addToTopOnly:
+                    for tmpZipFileName, tmpZipContents in zipFileMap.iteritems():
+                        for tmpZipContent in tmpZipContents:
+                            if re.search('^'+tmpZipContent+'$', file.lfn) is not None:
+                                zipFileName = tmpZipFileName
+                                break
+                        if zipFileName is not None:
+                            break
+                    if zipFileName is not None:
+                        if zipFileName not in zipFiles:
+                            zipFiles[zipFileName] = dict()
+                        contZipMap[file.lfn] = zipFileName
                 try:
+                    # check nevents
+                    if file.type == 'output' and not isZipFile and not self.addToTopOnly and self.job.prodSourceLabel in ['managed']:
+                        if file.lfn not in self.extraInfo['nevents']:
+                            errMsg = "nevents is missing in jobReport for {0}".format(file.lfn)
+                            self.logger.warning(errMsg)
+                            #self.job.ddmErrorCode = ErrorCode.EC_MissingNumEvents
+                            #raise ValueError, errMsg
                     # fsize
                     fsize = None
                     if not file.fsize in ['NULL','',0]:
@@ -231,17 +233,18 @@ class AdderAtlasPlugin (AdderPluginBase):
                     else:
                         fileDestinationDBlock = re.sub('_sub\d+$','',file.destinationDBlock)
                     # append to map
-                    if not idMap.has_key(fileDestinationDBlock):
+                    if not idMap.has_key(fileDestinationDBlock) and not isZipFile:
                         idMap[fileDestinationDBlock] = []
                     fileAttrs = {'guid'     : file.GUID,
                                  'lfn'      : file.lfn,
                                  'size'     : fsize,
-                                 'checksum' : file.checksum}
+                                 'checksum' : file.checksum,
+                                 'ds'       : fileDestinationDBlock}
                     # add SURLs if LFC registration is required
                     if self.useCentralLFC():
                         fileAttrs['surl'] = self.extraInfo['surl'][file.lfn]
                         if fileAttrs['surl'] == None:
-                            raise TypeError,"{0} has SURL=None".format(file.lfn)
+                            del fileAttrs['surl']
                         # get destination
                         if not dsDestMap.has_key(fileDestinationDBlock):
                             toConvert = True
@@ -286,16 +289,6 @@ class AdderAtlasPlugin (AdderPluginBase):
                                         tmpDest = self.siteMapper.getSite(self.job.computingSite).ddm
                                     if not tmpDest in tmpDestList:
                                         tmpDestList.append(tmpDest)
-                            # temporay conversion from DATADISK to PRODDISK for PRODDISK retirement
-                            if toConvert:
-                                try:
-                                    convDestList = self.convertRSE(tmpDestList,fileAttrs['surl'])
-                                    self.logger.debug("RSEs %s->%s %s" % (str(tmpDestList),
-                                                                          str(convDestList),
-                                                                          tmpDestList == convDestList))
-                                    tmpDestList = convDestList
-                                except:
-                                    self.logger.error("%s : " % self.jobID + traceback.format_exc())
                             # add
                             dsDestMap[fileDestinationDBlock] = tmpDestList
                     # extra meta data
@@ -330,7 +323,21 @@ class AdderAtlasPlugin (AdderPluginBase):
                                 del copiedFileAttrs['surl']
                                 osDsFileMap[pilotEndPoint][osFileDestinationDBlock].append(copiedFileAttrs)
                     if hasNormalURL:
-                        idMap[fileDestinationDBlock].append(fileAttrs)
+                        if not isZipFile:
+                            # add file to be added to dataset
+                            idMap[fileDestinationDBlock].append(fileAttrs)
+                            # add file to be added to zip
+                            if zipFileName is not None:
+                                if not 'files' in zipFiles[zipFileName]:
+                                    zipFiles[zipFileName]['files'] = []
+                                zipFiles[zipFileName]['files'].append(fileAttrs)
+                        else:
+                            # copy file attribute for zip file registration
+                            for tmpFileAttrName, tmpFileAttrVal in fileAttrs.iteritems():
+                                zipFiles[file.lfn][tmpFileAttrName] = tmpFileAttrVal
+                            zipFiles[file.lfn]['scope'] = file.scope
+                            zipFiles[file.lfn]['rse'] = dsDestMap[fileDestinationDBlock]
+                            continue
                     # for subscription
                     if self.job.prodSourceLabel in ['managed','test','software','rc_test','ptest','user','rucio_test'] and \
                            re.search('_sub\d+$',fileDestinationDBlock) != None and (not self.addToTopOnly) and \
@@ -353,20 +360,18 @@ class AdderAtlasPlugin (AdderPluginBase):
                                                    fileDestinationDBlock))
                                 else:
                                     # get DQ2 IDs
-                                    tmpSrcDDM = self.siteMapper.getSite(self.job.computingSite).ddm
-                                    tmpSrcSEs = brokerage.broker_util.getSEfromSched(self.siteMapper.getSite(self.job.computingSite).se)
+                                    srcSiteSpec = self.siteMapper.getSite(self.job.computingSite)
+                                    tmpSrcDDM = srcSiteSpec.ddm
                                     if self.job.prodSourceLabel == 'user' and not self.siteMapper.siteSpecList.has_key(file.destinationSE):
                                         # DQ2 ID was set by using --destSE for analysis job to transfer output
                                         tmpDstDDM = file.destinationSE
-                                        tmpDstSEs = file.destinationSE
                                     else:
                                         if DataServiceUtils.getDestinationSE(file.destinationDBlockToken) != None:
                                             tmpDstDDM = DataServiceUtils.getDestinationSE(file.destinationDBlockToken)
                                         else:
                                             tmpDstDDM = self.siteMapper.getSite(file.destinationSE).ddm
-                                        tmpDstSEs = brokerage.broker_util.getSEfromSched(self.siteMapper.getSite(file.destinationSE).se)
                                     # if src != dest or multi-token
-                                    if (tmpSrcDDM != tmpDstDDM and tmpSrcSEs != tmpDstSEs) or \
+                                    if (tmpSrcDDM != tmpDstDDM) or \
                                        (tmpSrcDDM == tmpDstDDM and file.destinationDBlockToken.count(',') != 0):
                                         optSub = {'DATASET_COMPLETE_EVENT' : ['http://%s:%s/server/panda/datasetCompleted' % \
                                                                               (panda_config.pserverhosthttp,panda_config.pserverporthttp)]}
@@ -499,17 +504,12 @@ class AdderAtlasPlugin (AdderPluginBase):
                 else:
                     regMsgStr = "LFC+DQ2 registraion with backend={0} for {1} files ".format(self.ddmBackEnd,
                                                                                              regNumFiles)
-                self.logger.debug('%s %s' % ('registerFilesInDatasets',str(destIdMap)))
-                out = rucioAPI.registerFilesInDataset(destIdMap)
-            except (DQ2.DQClosedDatasetException,
-                    DQ2.DQFrozenDatasetException,
-                    DQ2.DQUnknownDatasetException,
-                    DQ2.DQDatasetExistsException,
-                    DQ2.DQFileMetaDataMismatchException,
-                    FileCatalogUnknownFactory,
-                    FileCatalogException,
-                    DataIdentifierNotFound,
-                    RucioFileCatalogException,
+                if len(zipFiles) > 0:
+                    self.logger.debug('{0} {1}'.format('registerZipFiles',str(zipFiles)))
+                    rucioAPI.registerZipFiles(zipFiles)
+                self.logger.debug('{0} {1} zip={2}'.format('registerFilesInDatasets',str(destIdMap),str(contZipMap)))
+                out = rucioAPI.registerFilesInDataset(destIdMap, contZipMap)
+            except (DataIdentifierNotFound,
                     FileConsistencyMismatch,
                     UnsupportedOperation,
                     InvalidPath,
@@ -519,12 +519,14 @@ class AdderAtlasPlugin (AdderPluginBase):
                 # fatal errors
                 errType,errValue = sys.exc_info()[:2]
                 out = '%s : %s' % (errType,errValue)
+                out += traceback.format_exc()
                 isFatal = True
                 isFailed = True
             except:
                 # unknown errors
                 errType,errValue = sys.exc_info()[:2]
                 out = '%s : %s' % (errType,errValue)
+                out += traceback.format_exc()
                 if 'value too large for column' in out or \
                         'unique constraint (ATLAS_RUCIO.DIDS_GUID_IDX) violate' in out:
                     isFatal = True
@@ -566,55 +568,33 @@ class AdderAtlasPlugin (AdderPluginBase):
             for tmpName,tmpVal in subMap.iteritems():
                 for dq2ID,optSub,optSource in tmpVal:
                     if not self.goToMerging:
-                        # make DQ2 subscription for prod jobs
+                        # make subscription for prod jobs
+                        repLifeTime = 14
                         self.logger.debug("%s %s %s" % ('registerDatasetSubscription',
                                                         (tmpName,dq2ID),
-                                                        {'version':0,'archived':0,'callbacks':optSub,
-                                                         'sources':optSource,'sources_policy':(001000 | 010000),
-                                                         'wait_for_sources':0,'destination':None,'query_more_sources':0,
-                                                         'sshare':"production",'group':None,'activity':subActivity,
-                                                         'acl_alias':None,'replica_lifetime':"14 days"}))
+                                                        {'activity':subActivity,
+                                                         'replica_lifetime':repLifeTime}))
                         for iDDMTry in range(3):
-                            out = 'OK'
                             isFailed = False                        
                             try:
-                                self.dq2api.registerDatasetSubscription(tmpName,dq2ID,version=0,archived=0,callbacks=optSub,
-                                                                        sources=optSource,sources_policy=(001000 | 010000),
-                                                                        wait_for_sources=0,destination=None,query_more_sources=0,
-                                                                        sshare="production",group=None,activity=subActivity,
-                                                                        acl_alias=None,replica_lifetime="14 days")
-                            except DQ2.DQSubscriptionExistsException:
-                                # harmless error
-                                errType,errValue = sys.exc_info()[:2]
-                                out = '%s : %s' % (errType,errValue)
-                            except:
-                                # unknown errors
-                                errType,errValue = sys.exc_info()[:2]
-                                out = '%s : %s' % (errType,errValue)
-                                isFailed = True
-                                if 'is not a Tiers of Atlas Destination' in str(errValue) or \
-                                        'is not in Tiers of Atlas' in str(errValue) or \
-                                        'RSE Expression resulted in an empty set' in str(errValue) or \
-                                        'RSE excluded due to write blacklisting' in str(errValue) or \
-                                        'used/quota' in str(errValue):
-                                    # fatal error
-                                    self.job.ddmErrorCode = ErrorCode.EC_Subscription
-                                else:
-                                    # retry for temporary errors
-                                    time.sleep(10)
-                            else:
+                                status = rucioAPI.registerDatasetSubscription(tmpName,[dq2ID],
+                                                                              owner='panda',
+                                                                              activity=subActivity,
+                                                                              lifetime=repLifeTime)
+                                out = 'OK'
                                 break
+                            except:
+                                status = False
+                                errType,errValue = sys.exc_info()[:2]
+                                out = "%s %s" % (errType,errValue)
+                                isFailed = True
+                                # retry for temporary errors
+                                time.sleep(10)
                         if isFailed:
                             self.logger.error('%s' % out)
-                            # extract important error string
-                            extractedErrStr = DataServiceUtils.extractImportantError(out)
                             if self.job.ddmErrorCode == ErrorCode.EC_Subscription:
                                 # fatal error
-                                if extractedErrStr == '':
-                                    self.job.ddmErrorDiag = "subscription failure with %s" % out
-                                else:
-                                    self.logger.error(extractedErrStr)
-                                    self.job.ddmErrorDiag = "subscription failure with %s" % extractedErrStr
+                                self.job.ddmErrorDiag = "subscription failure with %s" % out
                                 self.result.setFatal()
                             else:
                                 # temoprary errors
@@ -626,6 +606,7 @@ class AdderAtlasPlugin (AdderPluginBase):
                     else:
                         # register location
                         tmpDsNameLoc = re.sub('_sub\d+$','',tmpName)
+                        repLifeTime = 14
                         for tmpLocName in optSource.keys():
                             self.logger.debug("%s %s %s %s" % ('registerDatasetLocation',tmpDsNameLoc,tmpLocName,
                                                                {'lifetime':"14 days"}))
@@ -633,20 +614,19 @@ class AdderAtlasPlugin (AdderPluginBase):
                                 out = 'OK'
                                 isFailed = False                        
                                 try:                        
-                                    self.dq2api.registerDatasetLocation(tmpDsNameLoc,tmpLocName,lifetime="14 days")
-                                except DQ2.DQLocationExistsException:
-                                    # harmless error
-                                    errType,errValue = sys.exc_info()[:2]
-                                    out = '%s : %s' % (errType,errValue)
+                                    rucioAPI.registerDatasetLocation(tmpDsNameLoc,[tmpLocName],
+                                                                     owner='panda',
+                                                                     activity=subActivity,
+                                                                     lifetime=repLifeTime)
+                                    out = 'OK'
+                                    break
                                 except:
-                                    # unknown errors
+                                    status = False
                                     errType,errValue = sys.exc_info()[:2]
-                                    out = '%s : %s' % (errType,errValue)
+                                    out = "%s %s" % (errType,errValue)
                                     isFailed = True
                                     # retry for temporary errors
                                     time.sleep(10)
-                                else:
-                                    break
                             if isFailed:
                                 self.logger.error('%s' % out)
                                 if self.job.ddmErrorCode == ErrorCode.EC_Location:
@@ -681,6 +661,9 @@ class AdderAtlasPlugin (AdderPluginBase):
                         # skip alternative stage-out
                         if tmpFile.lfn in self.job.altStgOutFileList():
                             continue
+                        # skip zip files
+                        if tmpFile.lfn in zipFileMap:
+                            continue
                         self.result.transferringFiles.append(tmpFile.lfn)
         elif not "--mergeOutput" in self.job.jobParameters:
             # send request to DaTRI unless files will be merged
@@ -696,16 +679,15 @@ class AdderAtlasPlugin (AdderPluginBase):
                         tmpTopDatasets[tmpTopName].append(dq2ID)
             # remove redundant CN from DN
             tmpDN = self.job.prodUserID
-            tmpDN = re.sub('/CN=limited proxy','',tmpDN)
-            tmpDN = re.sub('(/CN=proxy)+$','',tmpDN)
+            tmpDN = rucioAPI.parse_dn(tmpDN)
             # send request
             if tmpTopDatasets != {} and self.jobStatus == 'finished':
                 try:
-                    status,tmpDN = dq2Common.parse_dn(tmpDN)
-                    status,strUserInfo = dq2Info.finger(tmpDN)
-                    userInfo = None
+                    tmpDN = rucioAPI.parse_dn(tmpDN)
+                    status,userInfo = rucioAPI.finger(tmpDN)
+                    if not status:
+                        raise RuntimeError,'user info not found for {0} with {1}'.format(tmpDN,userInfo)
                     userEPs = []
-                    exec "userInfo=%s" % strUserInfo
                     # loop over all output datasets
                     for tmpDsName,dq2IDlist in tmpTopDatasets.iteritems():
                         for tmpDQ2ID in dq2IDlist:
@@ -733,7 +715,7 @@ class AdderAtlasPlugin (AdderPluginBase):
                     # set dataset status
                     for tmpName,tmpVal in subMap.iteritems():
                         self.datasetMap[tmpName].status = 'running'
-                    if userInfo != None:
+                    if userInfo != None and 'email' in userInfo:
                         self.sendEmail(userInfo['email'],tmpMsg,self.job.jediTaskID)
                 except:
                     errType,errValue = sys.exc_info()[:2]
@@ -751,7 +733,8 @@ class AdderAtlasPlugin (AdderPluginBase):
         if EventServiceUtils.isEventServiceJob(self.job) \
                 and not EventServiceUtils.isJobCloningJob(self.job):
             try:
-                self.registerEventServiceFiles()
+                pass
+                #self.registerEventServiceFiles()
             except:
                 errType,errValue = sys.exc_info()[:2]
                 self.logger.error('failed to register ES files with {0}:{1}'.format(errType,errValue))
@@ -800,111 +783,6 @@ class AdderAtlasPlugin (AdderPluginBase):
                     destIdMap[tmpDest] = {}
                 destIdMap[tmpDest][tmpDS] = tmpFiles
         return destIdMap
-
-
-    # remove unmerged files
-    def _removeUnmerged(self):
-        self.logger.debug("start removeUnmerged")
-        # get input files
-        inputFileGUIDs = []
-        inputFileStr = ''
-        for file in self.job.Files:
-            if file.type == 'input':
-                # remove skipped files
-                if file.status in ['skipped']:
-                    continue
-                # ignore lib.tgz
-                if re.search('lib\.tgz\.*\d*',file.lfn) != None:
-                    continue
-                # ignore DBRelease
-                if re.search('DBRelease',file.lfn) != None:
-                    continue
-                # append
-                inputFileGUIDs.append(file.GUID)
-                inputFileStr += '%s,' % file.lfn
-        # extract parent dataset name
-        tmpMatch = re.search('--parentDS ([^ \'\"]+)',self.job.jobParameters)
-        # failed
-        if tmpMatch == None:
-            self.logger.error("failed to extract parentDS from params=%s" % (self.job.jobParameters))
-            return False
-        parentDS = tmpMatch.group(1)
-        # delete
-        self.logger.debug("registerNewVersion %s" % parentDS)
-        self.logger.debug("deleteFilesFromDataset %s %s" % (parentDS,inputFileStr[:-1]))
-        nTry = 3
-        for iTry in range(nTry):
-            # add data to datasets
-            isFailed = False
-            isFatal  = False
-            out = 'OK'
-            try:
-                self.dq2api.registerNewVersion(parentDS)
-                self.dq2api.deleteFilesFromDataset(parentDS,inputFileGUIDs)
-            except (DQ2.DQClosedDatasetException,
-                    DQ2.DQFrozenDatasetException,
-                    DQ2.DQUnknownDatasetException,
-                    DQ2.DQFileMetaDataMismatchException):
-                # fatal errors
-                errType,errValue = sys.exc_info()[:2]
-                out = '%s : %s' % (errType,errValue)
-                isFatal = True
-            except:
-                # unknown errors
-                errType,errValue = sys.exc_info()[:2]
-                out = '%s : %s' % (errType,errValue)
-                isFailed = True
-            # failed
-            if isFailed or isFatal:
-                self.logger.error('%s' % out)
-                if (iTry+1) == nTry or isFatal:
-                    self.job.ddmErrorCode = ErrorCode.EC_Adder
-                    errMsg = "failed to remove unmerged files : "
-                    self.job.ddmErrorDiag = errMsg + out.split('\n')[-1]
-                    if not isFatal:
-                        self.result.setTemporary()
-                    else:
-                        self.result.setFatal()
-                    return False
-                self.logger.error("removeUnmerged Try:%s" % iTry)
-                # sleep
-                time.sleep(10)                    
-            else:
-                self.logger.debug('%s' % str(out))
-                break
-        # succeeded    
-        self.logger.debug("removeUnmerged end")
-        return True
-
-
-    # conversion from DATADISK to PRODDISK for PRODDISK retirement
-    def convertRSE(self,tmpDestList,surl):
-        newDestList = []
-        siteSpec = self.siteMapper.getSite(self.job.computingSite)
-        # loop over all RSEs
-        for tmpDest in tmpDestList:
-            newDest = None
-            if tmpDest.endswith('DATADISK') or tmpDest.endswith('PRODDISK'):
-                for tmpSeToken,tmpSePath in siteSpec.seprodpath.iteritems():
-                    if re.search(tmpSePath,surl) != None:
-                        if tmpSeToken in siteSpec.setokens:
-                            newDest = siteSpec.setokens[tmpSeToken]
-                        break
-                # use counterpart
-                if newDest == None:
-                    if tmpDest.endswith('DATADISK'):
-                        newDest = tmpDest.replace('DATADISK','PRODDISK')
-                    else:
-                        newDest = tmpDest.replace('PRODDISK','DATADISK')
-            if newDest == 'MWT2_PRODDISK':
-                newDest = 'MWT2_UC_PRODDISK'
-            # use old one
-            if newDest == None:
-                newDest = tmpDest
-            newDestList.append(newDest)
-        # return
-        return newDestList
-
 
 
     # send email notification

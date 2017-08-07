@@ -10,20 +10,16 @@ import datetime
 import commands
 import threading
 import userinterface.Client as Client
-from dataservice.DDM import ddm
-from dataservice.DDM import dashBorad
 from dataservice.DDM import rucioAPI
 from taskbuffer.OraDBProxy import DBProxy
 from taskbuffer.TaskBuffer import taskBuffer
+from taskbuffer import EventServiceUtils
 from pandalogger.PandaLogger import PandaLogger
 from jobdispatcher.Watcher import Watcher
 from brokerage.SiteMapper import SiteMapper
-from dataservice.Adder import Adder
 from dataservice.Finisher import Finisher
 from dataservice.MailUtils import MailUtils
 from taskbuffer import ProcessGroups
-import brokerage.broker_util
-import brokerage.broker
 import taskbuffer.ErrorCode
 import dataservice.DDM
 
@@ -375,7 +371,7 @@ varMap[':jobStatus2'] = 'starting'
 varMap[':jobStatus3'] = 'stagein'
 varMap[':jobStatus4'] = 'stageout'
 sql  = "SELECT PandaID FROM ATLAS_PANDA.jobsActive4 WHERE (prodSourceLabel=:prodSourceLabel1 OR prodSourceLabel=:prodSourceLabel2) "
-sql += "AND (jobStatus=:jobStatus1 OR jobStatus=:jobStatus2 OR jobStatus=:jobStatus3 OR jobStatus=:jobStatus4) AND modificationTime<:modificationTime"
+sql += "AND jobStatus IN (:jobStatus1,:jobStatus2,:jobStatus3,:jobStatus4) AND modificationTime<:modificationTime"
 status,res = taskBuffer.querySQLS(sql,varMap)
 if res == None:
     _logger.debug("# of Anal Watcher : %s" % res)
@@ -534,7 +530,7 @@ varMap[':jobStatus1'] = 'running'
 varMap[':jobStatus2'] = 'starting'
 varMap[':jobStatus3'] = 'stagein'
 varMap[':jobStatus4'] = 'stageout'
-status,res = taskBuffer.querySQLS("SELECT PandaID FROM ATLAS_PANDA.jobsActive4 WHERE (jobStatus=:jobStatus1 OR jobStatus=:jobStatus2 OR jobStatus=:jobStatus3 OR jobStatus=:jobStatus4) AND modificationTime<:modificationTime",
+status,res = taskBuffer.querySQLS("SELECT PandaID FROM ATLAS_PANDA.jobsActive4 WHERE jobStatus IN (:jobStatus1,:jobStatus2,:jobStatus3,:jobStatus4) AND modificationTime<:modificationTime",
                               varMap)
 if res == None:
     _logger.debug("# of General Watcher : %s" % res)
@@ -559,74 +555,6 @@ if res != None:
     for pandaID,cloud,prodSourceLabel in res:
         # collect PandaIDs
         jobs.append(pandaID)
-        try:
-            if cloud in ['US']:
-                # skip US since file info is not available in dashboard
-                continue
-            # check file status for production
-            if not prodSourceLabel in ['managed']:
-                pass
-            else:
-                # get T1 site
-                tmpT1siteID = siteMapper.getCloud(cloud)['source']
-                t1Site = siteMapper.getSite(tmpT1siteID)
-                # get pending input files
-                sqlF  = "SELECT lfn,GUID,dispatchDBlock FROM ATLAS_PANDA.filesTable4 WHERE PandaID=:PandaID "
-                sqlF += "AND type=:type AND status=:status"
-                varMap = {}
-                varMap[':type']    = 'input'
-                varMap[':status']  = 'pending'
-                varMap[':PandaID'] = pandaID
-                stFile,resFile = taskBuffer.querySQLS(sqlF,varMap)
-                if resFile != None:
-                    # loop over all files
-                    for tmpLFN,tmpGUID,tmpDispDBlock in resFile:
-                        # get file events
-                        tmpDQ2IDs = t1Site.setokens.values()
-                        tmpKey = (tuple(tmpDQ2IDs),tmpLFN)
-                        if not dashFileMap.has_key(tmpKey):
-                            _logger.debug('getting fileEvents for %s:%s' % tmpKey)
-                            tmpStat,tmpOut = dashBorad.listFileEvents(tmpDQ2IDs,tmpGUID)
-                            _logger.debug(tmpStat)
-                            _logger.debug(tmpOut)                            
-                            if tmpStat != 0:
-                                # failed
-                                continue
-                            # convert to list
-                            try:
-                                exec "tmpEvens = %s" % tmpOut
-                                if not isinstance(tmpEvens,types.ListType):
-                                    raise TypeError,"%s is not a list" % type(tmpEvens)
-                            except:
-                                errType,errValue = sys.exc_info()[:2]
-                                _logger.error(tmpOut)                                
-                                _logger.error("invalid dashboard response %s %s" % (errType,errValue))
-                                continue
-                            dashFileMap[tmpKey] = None
-                            # look for latest events
-                            tmpLastTime = ''
-                            for tmpEvt in tmpEvens:
-                                # pickup only DQ2 events
-                                if not tmpEvt['tool_id'] in ['DQ2',None]:
-                                    continue
-                                # pickup first one or newer
-                                if tmpLastTime == '' or tmpLastTime < tmpEvt['modified_time']:
-                                    tmpLastTime = tmpEvt['modified_time']
-                                    dashFileMap[tmpKey] = tmpEvt['state']
-                            _logger.debug('got status=%s' % dashFileMap[tmpKey])
-                        # update failed files
-                        if dashFileMap[tmpKey] in ['FAILED_TRANSFER','BAD']:
-                            sqlUpF  = "UPDATE ATLAS_PANDA.filesTable4 SET status=:newStatus "
-                            sqlUpF += "WHERE PandaID=:PandaID AND lfn=:lfn"
-                            varMap = {}
-                            varMap[':PandaID'] = pandaID
-                            varMap[':lfn'] = tmpLFN
-                            varMap[':newStatus'] = dashFileMap[tmpKey].lower()
-                            taskBuffer.querySQLS(sqlUpF,varMap)
-                            _logger.debug('set status=%s to %s:%s' % (dashFileMap[tmpKey],pandaID,tmpLFN))
-        except:
-            errType,errValue = sys.exc_info()[:2]
-            _logger.error("dashboard access failed with %s %s" % (errType,errValue))
 if len(jobs):
     _logger.debug("killJobs for Defined (%s)" % str(jobs))
     Client.killJobs(jobs,2)
@@ -733,7 +661,7 @@ varMap[':rFlag1']    = 2
 stDS,resDS = taskBuffer.querySQLS(sql,varMap)
 sqlSS  = 'SELECT laststart FROM ATLAS_PANDAMETA.siteData '
 sqlSS += 'WHERE site=:site AND flag=:flag AND hours=:hours AND laststart<:laststart '
-sqlPI  = 'SELECT PandaID FROM ATLAS_PANDA.jobsActive4 '
+sqlPI  = 'SELECT PandaID,eventService,attemptNr FROM ATLAS_PANDA.jobsActive4 '
 sqlPI += 'WHERE prodSourceLabel=:prodSourceLabel AND jobStatus IN (:jobStatus1,:jobStatus2) '
 sqlPI += 'AND (modificationTime<:timeLimit OR stateChangeTime<:timeLimit) '
 sqlPI += 'AND lockedby=:lockedby AND currentPriority>=:prioLimit '
@@ -760,11 +688,15 @@ for tmpSite, in resDS:
         varMap[':rFlag1']    = 2
         stPI,resPI = taskBuffer.querySQLS(sqlPI,varMap)
         jediJobs = []
-        if resPI != None:
-            for id, in resPI:
-                jediJobs.append(id)
         # reassign
-        _logger.debug('reassignJobs for JEDI at inactive site %s laststart=%s -> #%s' % (tmpSite,resSS[0][0],len(jediJobs)))
+        _logger.debug('reassignJobs for JEDI at inactive site %s laststart=%s' % (tmpSite,resSS[0][0]))
+        if resPI != None:
+            for pandaID, eventService, attemptNr in resPI:
+                if eventService in [EventServiceUtils.esMergeJobFlagNumber]:
+                    _logger.debug('retrying {0} at inactive site %s' % (pandaID,tmpSite))
+                    taskBuffer.retryJob(pandaID,{},getNewPandaID=True,attemptNr=attemptNr,
+                                                 recoverableEsMerge=True)
+                jediJobs.append(pandaID)
         if len(jediJobs) != 0:
             nJob = 100
             iJob = 0
@@ -938,15 +870,19 @@ except:
 # reassign too long activated jobs in active table
 timeLimit = datetime.datetime.utcnow() - datetime.timedelta(days=2)
 status,res = taskBuffer.lockJobsForReassign("ATLAS_PANDA.jobsActive4",timeLimit,['activated'],['managed'],[],[],[],True,
-                                            onlyReassignable=True)
+                                            onlyReassignable=True,getEventService=True)
 jobs = []
 jediJobs = []
 if res != None:
-    for (id,lockedby) in res:
+    for pandaID, lockedby, eventService, attemptNr in res:
         if lockedby == 'jedi':
-            jediJobs.append(id)
+            if eventService in [EventServiceUtils.esMergeJobFlagNumber]:
+                _logger.debug('retrying {0} in long activated' % pandaID)
+                taskBuffer.retryJob(pandaID,{},getNewPandaID=True,attemptNr=attemptNr,
+                                    recoverableEsMerge=True)
+            jediJobs.append(pandaID)
         else:
-            jobs.append(id)
+            jobs.append(pandaID)
 _logger.debug('reassignJobs for long activated in active table -> #%s' % len(jobs))
 if len(jobs) != 0:
     nJob = 100
@@ -1034,8 +970,32 @@ if len(jobs):
             Client.killJobs(jobs[iJob:iJob+nJob],4)
             iJob += nJob
 
+
 # kill too long waiting jobs
-timeLimit = datetime.datetime.utcnow() - datetime.timedelta(days=1)
+timeLimit = datetime.datetime.utcnow() - datetime.timedelta(hours=1)
+varMap = {}
+varMap[':jobStatus']    = 'waiting'
+varMap[':creationTime'] = timeLimit
+varMap[':coJumbo'] = EventServiceUtils.coJumboJobFlagNumber
+sql  = "SELECT PandaID FROM ATLAS_PANDA.jobsWaiting4 WHERE jobStatus=:jobStatus AND creationTime<:creationTime "
+sql += "AND (eventService IS NULL OR eventService<>:coJumbo) "
+status,res = taskBuffer.querySQLS(sql, varMap)
+jobs = []
+if res != None:
+    for (id,) in res:
+        jobs.append(id)
+# kill
+if len(jobs):
+    if len(jobs):
+        nJob = 100
+        iJob = 0
+        while iJob < len(jobs):
+            _logger.debug("killJobs for Waiting (%s)" % str(jobs[iJob:iJob+nJob]))
+            Client.killJobs(jobs[iJob:iJob+nJob],4)
+            iJob += nJob
+
+# kill too long waiting jobs
+timeLimit = datetime.datetime.utcnow() - datetime.timedelta(days=7)
 status,res = taskBuffer.querySQLS("SELECT PandaID FROM ATLAS_PANDA.jobsWaiting4 WHERE creationTime<:creationTime",
                               {':creationTime':timeLimit})
 jobs = []
@@ -1045,10 +1005,11 @@ if res != None:
 # kill
 if len(jobs):
     Client.killJobs(jobs,4)
-    _logger.debug("killJobs for Waiting (%s)" % str(jobs))
+    _logger.debug("killJobs in jobsWaiting (%s)" % str(jobs))
 
 
 # reassign long waiting jobs
+"""
 timeLimit = datetime.datetime.utcnow() - datetime.timedelta(minutes=30)
 status,res = taskBuffer.lockJobsForReassign("ATLAS_PANDA.jobsWaiting4",timeLimit,['waiting'],['managed'],[],[],[],True)
 jobs = []
@@ -1075,6 +1036,7 @@ if len(jediJobs) != 0:
         _logger.debug('reassignJobs for JEDI Waiting (%s)' % jediJobs[iJob:iJob+nJob])
         Client.killJobs(jediJobs[iJob:iJob+nJob],51)
         iJob += nJob
+"""
 
 # kill too long running jobs
 timeLimit = datetime.datetime.utcnow() - datetime.timedelta(days=21)
@@ -1118,6 +1080,23 @@ if len(jobs):
     _logger.debug("killJobs for DDM (%s)" % str(jobs))
 
 
+# kill too long throttled jobs
+timeLimit = datetime.datetime.utcnow() - datetime.timedelta(days=7)
+varMap = {}
+varMap[':jobStatus'] = 'throttled'
+varMap[':creationTime'] = timeLimit
+status,res = taskBuffer.querySQLS("SELECT PandaID FROM ATLAS_PANDA.jobsActive4 WHERE jobStatus=:jobStatus AND creationTime<:creationTime ",
+                                  varMap)
+jobs = []
+if res != None:
+    for (id,) in res:
+        jobs.append(id)
+# kill
+if len(jobs):
+    Client.killJobs(jobs,2)
+    _logger.debug("killJobs for throttled (%s)" % str(jobs))
+
+
 # check if merge job is valid
 _logger.debug('kill invalid pmerge')
 varMap = {}
@@ -1145,346 +1124,6 @@ _logger.debug('killed invalid pmerge {0}/{1}'.format(badPmerge,nPmerge))
 _logger.debug('jumbo job cleanup')
 res = taskBuffer.cleanupJumboJobs()
 _logger.debug(res)
-
-_memoryCheck("closing")
-
-# thread pool
-class ThreadPool:
-    def __init__(self):
-        self.lock = threading.Lock()
-        self.list = []
-
-    def add(self,obj):
-        self.lock.acquire()
-        self.list.append(obj)
-        self.lock.release()
-
-    def remove(self,obj):
-        self.lock.acquire()
-        self.list.remove(obj)
-        self.lock.release()
-
-    def join(self):
-        self.lock.acquire()
-        thrlist = tuple(self.list)
-        self.lock.release()
-        for thr in thrlist:
-            thr.join()
-
-
-# thread to close dataset
-class CloserThr (threading.Thread):
-    def __init__(self,lock,proxyLock,datasets,pool):
-        threading.Thread.__init__(self)
-        self.datasets   = datasets
-        self.lock       = lock
-        self.proxyLock  = proxyLock
-        self.pool       = pool
-        self.pool.add(self)
-                                        
-    def run(self):
-        self.lock.acquire()
-        try:
-            # loop over all datasets
-            for vuid,name,modDate in self.datasets:
-                _logger.debug("Close %s %s" % (modDate,name))
-                if not name.startswith('pandaddm_'):
-                    status,out = ddm.DQ2.main('freezeDataset',name)
-                else:
-                    status,out = 0,''
-                if status != 0 and out.find('DQFrozenDatasetException') == -1 and \
-                       out.find("DQUnknownDatasetException") == -1 and out.find("DQSecurityException") == -1 and \
-                       out.find("DQDeletedDatasetException") == -1 and out.find("DQUnknownDatasetException") == -1:
-                    _logger.error(out)
-                else:
-                    self.proxyLock.acquire()
-                    varMap = {}
-                    varMap[':vuid'] = vuid
-                    varMap[':status'] = 'completed'
-                    taskBuffer.querySQLS("UPDATE ATLAS_PANDA.Datasets SET status=:status,modificationdate=CURRENT_DATE WHERE vuid=:vuid",
-                                     varMap)
-                    self.proxyLock.release()                    
-                    if name.startswith('pandaddm_'):
-                        continue
-                    # count # of files
-                    status,out = ddm.DQ2.main('getNumberOfFiles',name)
-                    _logger.debug(out)                                            
-                    if status != 0:
-                        _logger.error(out)                            
-                    else:
-                        try:
-                            nFile = int(out)
-                            _logger.debug(nFile)
-                            if nFile == 0:
-                                # erase dataset
-                                _logger.debug('erase %s' % name)
-                                status,out = ddm.DQ2.main('eraseDataset',name)
-                                _logger.debug(out)                            
-                        except:
-                            pass
-        except:
-            pass
-        self.pool.remove(self)
-        self.lock.release()
-
-# close datasets
-"""
-timeLimitU = datetime.datetime.utcnow() - datetime.timedelta(minutes=30)
-timeLimitL = datetime.datetime.utcnow() - datetime.timedelta(days=3)
-closeLock = threading.Semaphore(5)
-closeProxyLock = threading.Lock()
-closeThreadPool = ThreadPool()
-while True:
-    # lock
-    closeLock.acquire()
-    # get datasets
-    closeProxyLock.acquire()
-    varMap = {}
-    varMap[':modificationdateU'] = timeLimitU
-    varMap[':modificationdateL'] = timeLimitL    
-    varMap[':type']   = 'output'
-    varMap[':status'] = 'tobeclosed'
-    sqlQuery = 'type=:type AND status=:status AND (modificationdate BETWEEN :modificationdateL AND :modificationdateU) AND rownum <= 500'
-    proxyS = taskBuffer.proxyPool.getProxy()
-    res = proxyS.getLockDatasets(sqlQuery,varMap)
-    taskBuffer.proxyPool.putProxy(proxyS)
-    if res == None:
-        _logger.debug('# of datasets to be closed: %s' % res)
-    else:
-        _logger.debug('# of datasets to be closed: %s' % len(res))
-    if res==None or len(res)==0:
-        closeProxyLock.release()
-        closeLock.release()
-        break
-    # release
-    closeProxyLock.release()
-    closeLock.release()
-    # run thread
-    closerThr = CloserThr(closeLock,closeProxyLock,res,closeThreadPool)
-    closerThr.start()
-
-closeThreadPool.join()
-"""
-
-# thread to freeze dataset
-class Freezer (threading.Thread):
-    def __init__(self,lock,proxyLock,datasets,pool):
-        threading.Thread.__init__(self)
-        self.datasets   = datasets
-        self.lock       = lock
-        self.proxyLock  = proxyLock
-        self.pool       = pool
-        self.pool.add(self)
-                                        
-    def run(self):
-        self.lock.acquire()
-        try:
-            for vuid,name,modDate in self.datasets:
-                _logger.debug("start %s %s" % (modDate,name))
-                self.proxyLock.acquire()
-                retF,resF = taskBuffer.querySQLS("SELECT /*+ index(tab FILESTABLE4_DESTDBLOCK_IDX) */ lfn FROM ATLAS_PANDA.filesTable4 tab WHERE destinationDBlock=:destinationDBlock",
-                                             {':destinationDBlock':name})
-                self.proxyLock.release()
-                if retF<0:
-                    _logger.error("SQL error")
-                else:
-                    # no files in filesTable
-                    if len(resF) == 0:
-                        _logger.debug("freeze %s " % name)
-                        if not name.startswith('pandaddm_'):
-                            status,out = ddm.DQ2.main('freezeDataset',name)
-                        else:
-                            status,out = 0,''
-                        if status != 0 and out.find('DQFrozenDatasetException') == -1 and \
-                               out.find("DQUnknownDatasetException") == -1 and out.find("DQSecurityException") == -1 and \
-                               out.find("DQDeletedDatasetException") == -1 and out.find("DQUnknownDatasetException") == -1:
-                            _logger.error(out)
-                        else:
-                            self.proxyLock.acquire()
-                            varMap = {}
-                            varMap[':vuid'] = vuid
-                            varMap[':status'] = 'completed' 
-                            taskBuffer.querySQLS("UPDATE ATLAS_PANDA.Datasets SET status=:status,modificationdate=CURRENT_DATE WHERE vuid=:vuid",
-                                             varMap)
-                            self.proxyLock.release()                            
-                            if name.startswith('pandaddm_'):
-                                continue
-                            # count # of files
-                            status,out = ddm.DQ2.main('getNumberOfFiles',name)
-                            _logger.debug(out)                                            
-                            if status != 0:
-                                _logger.error(out)                            
-                            else:
-                                try:
-                                    nFile = int(out)
-                                    _logger.debug(nFile)
-                                    if nFile == 0:
-                                        # erase dataset
-                                        _logger.debug('erase %s' % name)                                
-                                        status,out = ddm.DQ2.main('eraseDataset',name)
-                                        _logger.debug(out)                                                                
-                                except:
-                                    pass
-                    else:
-                        _logger.debug("wait %s " % name)
-                        self.proxyLock.acquire()                        
-                        taskBuffer.querySQLS("UPDATE ATLAS_PANDA.Datasets SET modificationdate=CURRENT_DATE WHERE vuid=:vuid", {':vuid':vuid})
-                        self.proxyLock.release()                                                    
-                _logger.debug("end %s " % name)
-        except:
-            pass
-        self.pool.remove(self)
-        self.lock.release()
-                            
-# freeze dataset
-"""
-timeLimitU = datetime.datetime.utcnow() - datetime.timedelta(days=4)
-timeLimitL = datetime.datetime.utcnow() - datetime.timedelta(days=14)
-freezeLock = threading.Semaphore(5)
-freezeProxyLock = threading.Lock()
-freezeThreadPool = ThreadPool()
-while True:
-    # lock
-    freezeLock.acquire()
-    # get datasets
-    sqlQuery = 'type=:type AND status IN (:status1,:status2,:status3) ' + \
-               'AND (modificationdate BETWEEN :modificationdateL AND :modificationdateU) AND REGEXP_LIKE(name,:pattern) AND rownum <= 500'
-    varMap = {}
-    varMap[':modificationdateU'] = timeLimitU
-    varMap[':modificationdateL'] = timeLimitL    
-    varMap[':type'] = 'output'
-    varMap[':status1'] = 'running'
-    varMap[':status2'] = 'created'
-    varMap[':status3'] = 'defined'
-    varMap[':pattern'] = '_sub[[:digit:]]+$'
-    freezeProxyLock.acquire()
-    proxyS = taskBuffer.proxyPool.getProxy()
-    res = proxyS.getLockDatasets(sqlQuery,varMap)
-    taskBuffer.proxyPool.putProxy(proxyS)
-    if res == None:
-        _logger.debug('# of datasets to be frozen: %s' % res)
-    else:
-        _logger.debug('# of datasets to be frozen: %s' % len(res))
-    if res==None or len(res)==0:
-        freezeProxyLock.release()
-        freezeLock.release()
-        break
-    freezeProxyLock.release()            
-    # release
-    freezeLock.release()
-    # run freezer
-    freezer = Freezer(freezeLock,freezeProxyLock,res,freezeThreadPool)
-    freezer.start()
-
-freezeThreadPool.join()
-"""
-
-# thread to delete dataset replica from T2
-class T2Cleaner (threading.Thread):
-    def __init__(self,lock,proxyLock,datasets,pool):
-        threading.Thread.__init__(self)
-        self.datasets   = datasets
-        self.lock       = lock
-        self.proxyLock  = proxyLock
-        self.pool       = pool
-        self.pool.add(self)
-                                        
-    def run(self):
-        self.lock.acquire()
-        try:
-            for vuid,name,modDate in self.datasets:
-                _logger.debug("cleanT2 %s" % name)
-                # get list of replicas
-                status,out = rucioAPI.listDatasetReplicas(name)
-                if status != 0:
-                    _logger.error(out)
-                    continue
-                else:
-                    tmpRepSites = out
-                    # check cloud
-                    cloudName = None
-                    for tmpCloudName in siteMapper.getCloudList():
-                        t1SiteName = siteMapper.getCloud(tmpCloudName)['source']
-                        t1SiteDDMs  = siteMapper.getSite(t1SiteName).setokens.values()
-                        for tmpDDM in t1SiteDDMs:
-                            if tmpRepSites.has_key(tmpDDM):
-                                cloudName = tmpCloudName
-                                break
-                    # cloud is not found
-                    if cloudName == None:        
-                        _logger.error("cannot find cloud for %s : %s" % (name,str(tmpRepSites)))
-                    elif not cloudName in ['DE','CA','ES','FR','IT','NL','UK','TW','RU']:
-                        # FIXME : test only EGEE for now
-                        pass
-                    else:
-                        # look for T2 IDs
-                        t2DDMs = []
-                        for tmpDDM in tmpRepSites.keys():
-                            if not tmpDDM in t1SiteDDMs and tmpDDM.endswith('_PRODDISK'):
-                                t2DDMs.append(tmpDDM)
-                        # delete replica for sub
-                        if re.search('_sub\d+$',name) != None and t2DDMs != []:
-                            _logger.debug(('deleteDatasetReplicas',name,t2DDMs))
-                            status,out = ddm.DQ2.main('deleteDatasetReplicas',name,t2DDMs)
-                            if status != 0:
-                                _logger.error(out)
-                                if out.find('DQFrozenDatasetException')  == -1 and \
-                                       out.find("DQUnknownDatasetException") == -1 and out.find("DQSecurityException") == -1 and \
-                                       out.find("DQDeletedDatasetException") == -1 and out.find("DQUnknownDatasetException") == -1 and \
-                                       out.find("No replica found") == -1:
-                                    continue
-                    # update        
-                    self.proxyLock.acquire()
-                    varMap = {}
-                    varMap[':vuid'] = vuid
-                    varMap[':status'] = 'completed' 
-                    taskBuffer.querySQLS("UPDATE ATLAS_PANDA.Datasets SET status=:status,modificationdate=CURRENT_DATE WHERE vuid=:vuid",
-                                         varMap)
-                    self.proxyLock.release()                            
-                _logger.debug("end %s " % name)
-        except:
-            pass
-        self.pool.remove(self)
-        self.lock.release()
-                            
-# delete dataset replica from T2
-"""
-timeLimitU = datetime.datetime.utcnow() - datetime.timedelta(minutes=30)
-timeLimitL = datetime.datetime.utcnow() - datetime.timedelta(days=3)
-t2cleanLock = threading.Semaphore(5)
-t2cleanProxyLock = threading.Lock()
-t2cleanThreadPool = ThreadPool()
-while True:
-    # lock
-    t2cleanLock.acquire()
-    # get datasets
-    varMap = {}
-    varMap[':modificationdateU'] = timeLimitU
-    varMap[':modificationdateL'] = timeLimitL    
-    varMap[':type']   = 'output'
-    varMap[':status'] = 'cleanup'
-    sqlQuery = 'type=:type AND status=:status AND (modificationdate BETWEEN :modificationdateL AND :modificationdateU) AND rownum <= 500'
-    t2cleanProxyLock.acquire()
-    proxyS = taskBuffer.proxyPool.getProxy()
-    res = proxyS.getLockDatasets(sqlQuery,varMap)
-    taskBuffer.proxyPool.putProxy(proxyS)
-    if res == None:
-        _logger.debug('# of datasets to be deleted from T2: %s' % res)
-    else:
-        _logger.debug('# of datasets to be deleted from T2: %s' % len(res))
-    if res==None or len(res)==0:
-        t2cleanProxyLock.release()
-        t2cleanLock.release()
-        break
-    t2cleanProxyLock.release()            
-    # release
-    t2cleanLock.release()
-    # run t2cleanr
-    t2cleanr = T2Cleaner(t2cleanLock,t2cleanProxyLock,res,t2cleanThreadPool)
-    t2cleanr.start()
-
-t2cleanThreadPool.join()
-"""
 
 
 _memoryCheck("delete XML")

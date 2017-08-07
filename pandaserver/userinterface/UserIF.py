@@ -18,10 +18,8 @@ from taskbuffer.JobSpec import JobSpec
 from taskbuffer.WrappedPickle import WrappedPickle
 from brokerage.SiteMapper import SiteMapper
 from pandalogger.PandaLogger import PandaLogger
-from RbLauncher import RbLauncher
-from ReBroker import ReBroker
 from taskbuffer import PrioUtil
-from dataservice.DDM import dq2Info
+from dataservice.DDM import rucioAPI
 
 # logger
 _logger = PandaLogger().getLogger('UserIF')
@@ -47,7 +45,7 @@ class UserIF:
             _logger.debug("submitJobs %s len:%s prodRole=%s FQAN:%s" % (user,len(jobs),prodRole,str(userFQANs)))
             maxJobs = 5000
             if len(jobs) > maxJobs:
-                _logger.error("too may jobs more than %s" % maxJobs)
+                _logger.error("submitJobs: too many jobs more than %s" % maxJobs)
                 jobs = jobs[:maxJobs]
         except:
             type, value, traceBack = sys.exc_info()
@@ -182,27 +180,6 @@ class UserIF:
     # run rebrokerage
     def runReBrokerage(self,dn,jobID,cloud,excludedSite,forceRebro):
         returnVal = "True"
-        try:
-            # lock job in simulation mode to check
-            checker = ReBroker(self.taskBuffer,simulation=True,userRequest=True)
-            stLock,retLock = checker.lockJob(dn,jobID)
-            # failed
-            if not stLock:
-                returnVal = "ERROR: "+retLock
-                return returnVal
-            # continue to run rebrokerage in background
-            if excludedSite in [None,'']:
-                # use None for empty excludedSite
-                excludedSite = None
-            _logger.debug("runReBrokerage %s JobID:%s cloud=%s ex=%s forceOpt=%s" % (dn,jobID,cloud,str(excludedSite),forceRebro))
-            # instantiate ReBroker
-            thr = RbLauncher(dn,jobID,cloud,excludedSite)
-            # start ReBroker
-            thr.start()
-        except:
-            errType,errValue,errTraceBack = sys.exc_info()
-            _logger.error("runReBrokerage: %s %s" % (errType,errValue))
-            returnVal = "ERROR: runReBrokerage crashed"
         # return
         return returnVal
 
@@ -213,7 +190,6 @@ class UserIF:
         try:
             _logger.debug("retryFailedJobsInActive %s JobID:%s" % (dn,jobID))
             cUID = self.taskBuffer.cleanUserID(dn)            
-            # instantiate ReBroker
             tmpRet = self.taskBuffer.retryJobsInActive(cUID,jobID)
             returnVal = True
         except:
@@ -493,7 +469,7 @@ class UserIF:
         ids = WrappedPickle.loads(idsStr)
         if not isinstance(ids,types.ListType):
             ids = [ids]
-        _logger.debug("killJob : %s %s %s %s %s" % (user,code,prodManager,fqans,ids))
+        _logger.info("killJob : %s %s %s %s %s" % (user,code,prodManager,fqans,ids))
         try:
             if useMailAsID:
                 _logger.debug("killJob : getting mail address for %s" % user)
@@ -501,9 +477,8 @@ class UserIF:
                 realDN = re.sub('(/CN=proxy)+','',realDN)
                 nTry = 3
                 for iDDMTry in range(nTry):
-                    status,out = dq2Info.finger(realDN)
-                    if status == 0:
-                        exec "userInfo=%s" % out
+                    status,userInfo = rucioAPI.finger(realDN)
+                    if status:
                         _logger.debug("killJob : %s is converted to %s" % (user,userInfo['email']))
                         user = userInfo['email']
                         break
@@ -723,7 +698,7 @@ class UserIF:
             # truncate
             maxIDs = 5500
             if len(pandaIDs) > maxIDs:
-                _logger.error("too long ID list more than %s" % maxIDs)
+                _logger.error("getSlimmedFileInfoPandaIDs: too long ID list more than %s" % maxIDs)
                 pandaIDs = pandaIDs[:maxIDs]
             # get
             _logger.debug("getSlimmedFileInfoPandaIDs start : %s %s" % (dn,len(pandaIDs)))            
@@ -783,7 +758,7 @@ class UserIF:
             # truncate
             maxIDs = 5500
             if len(ids) > maxIDs:
-                _logger.error("too long ID list more than %s" % maxIDs)
+                _logger.error("getFullJobStatus: too long ID list more than %s" % maxIDs)
                 ids = ids[:maxIDs]
         except:
             type, value, traceBack = sys.exc_info()
@@ -938,14 +913,12 @@ class UserIF:
         return ret
 
 
-
     # increase attempt number for unprocessed files
     def increaseAttemptNrPanda(self,jediTaskID,increasedNr):
         # exec
         ret = self.taskBuffer.increaseAttemptNrPanda(jediTaskID,increasedNr)
         # return
         return ret
-
 
 
     # change task attribute
@@ -956,14 +929,12 @@ class UserIF:
         return ret
 
 
-
     # change split rule for task
     def changeTaskSplitRulePanda(self,jediTaskID,attrName,attrValue):
         # exec
         ret = self.taskBuffer.changeTaskSplitRulePanda(jediTaskID,attrName,attrValue)
         # return
         return ret
-
 
 
     # reactivate task
@@ -973,12 +944,52 @@ class UserIF:
         return ret
 
 
-
     # get task status
     def getTaskStatus(self,jediTaskID):
         # update task status
         ret = self.taskBuffer.getTaskStatus(jediTaskID)
         return ret[0]
+
+
+    # reassign share
+    def reassignShare(self, jedi_task_ids, share_dest):
+        return self.taskBuffer.reassignShare(jedi_task_ids, share_dest)
+
+
+    # list tasks in share
+    def listTasksInShare(self, gshare, status):
+        return self.taskBuffer.listTasksInShare(gshare, status)
+
+
+    # get taskParamsMap
+    def getTaskParamsMap(self, jediTaskID):
+        # get taskParamsMap
+        ret = self.taskBuffer.getTaskParamsMap(jediTaskID)
+        return ret
+
+    # update workers
+    def updateWorkers(self,user,host,harvesterID,data):
+        ret = self.taskBuffer.updateWorkers(harvesterID,data)
+        if ret is None:
+            retVal = (False,'database error')
+        else:
+            retVal = (True,ret)
+        # serialize 
+        return json.dumps(retVal)
+
+    # heartbeat for harvester
+    def harvesterIsAlive(self,user,host,harvesterID,data):
+        ret = self.taskBuffer.harvesterIsAlive(user,host,harvesterID,data)
+        if ret is None:
+            retVal = (False,'database error')
+        else:
+            retVal = (True,ret)
+        # serialize 
+        return json.dumps(retVal)
+
+    # report stat of workers
+    def reportWorkerStats(self, harvesterID, siteName, paramsList):
+        return self.taskBuffer.reportWorkerStats(harvesterID, siteName, paramsList)
 
 
 
@@ -2050,7 +2061,7 @@ def changeTaskSplitRulePanda(req,jediTaskID,attrName,attrValue):
     except:
         return pickle.dumps((False,'jediTaskID must be an integer'))        
     # check attribute
-    if not attrName in ['TW','EC','ES']:
+    if not attrName in ['TW','EC','ES','MF','NG']:
         return pickle.dumps((2,"disallowed to update {0}".format(attrName)))
     ret = userIF.changeTaskSplitRulePanda(jediTaskID,attrName,attrValue)
     return pickle.dumps((ret,None))
@@ -2061,10 +2072,7 @@ def changeTaskSplitRulePanda(req,jediTaskID,attrName,attrValue):
 def pauseTask(req,jediTaskID):
     # check security
     if not isSecure(req):
-        if properErrorCode:
-            return pickle.dumps((100,'secure connection is required'))
-        else:
-            return pickle.dumps((False,'secure connection is required'))
+        return pickle.dumps((False, 'secure connection is required'))
     # get DN
     user = None
     if req.subprocess_env.has_key('SSL_CLIENT_S_DN'):
@@ -2075,10 +2083,7 @@ def pauseTask(req,jediTaskID):
     try:
         jediTaskID = long(jediTaskID)
     except:
-        if properErrorCode:
-            return pickle.dumps((101,'jediTaskID must be an integer'))        
-        else:
-            return pickle.dumps((False,'jediTaskID must be an integer'))
+        return pickle.dumps((False, 'jediTaskID must be an integer'))
     ret = userIF.pauseTask(jediTaskID,user,prodRole)
     return pickle.dumps(ret)
 
@@ -2088,10 +2093,7 @@ def pauseTask(req,jediTaskID):
 def resumeTask(req,jediTaskID):
     # check security
     if not isSecure(req):
-        if properErrorCode:
-            return pickle.dumps((100,'secure connection is required'))
-        else:
-            return pickle.dumps((False,'secure connection is required'))
+        return pickle.dumps((False, 'secure connection is required'))
     # get DN
     user = None
     if req.subprocess_env.has_key('SSL_CLIENT_S_DN'):
@@ -2102,10 +2104,7 @@ def resumeTask(req,jediTaskID):
     try:
         jediTaskID = long(jediTaskID)
     except:
-        if properErrorCode:
-            return pickle.dumps((101,'jediTaskID must be an integer'))        
-        else:
-            return pickle.dumps((False,'jediTaskID must be an integer'))
+        return pickle.dumps((False, 'jediTaskID must be an integer'))
     ret = userIF.resumeTask(jediTaskID,user,prodRole)
     return pickle.dumps(ret)
 
@@ -2115,10 +2114,7 @@ def resumeTask(req,jediTaskID):
 def avalancheTask(req,jediTaskID):
     # check security
     if not isSecure(req):
-        if properErrorCode:
-            return pickle.dumps((100,'secure connection is required'))
-        else:
-            return pickle.dumps((False,'secure connection is required'))
+        return pickle.dumps((False, 'secure connection is required'))
     # get DN
     user = None
     if req.subprocess_env.has_key('SSL_CLIENT_S_DN'):
@@ -2129,10 +2125,7 @@ def avalancheTask(req,jediTaskID):
     try:
         jediTaskID = long(jediTaskID)
     except:
-        if properErrorCode:
-            return pickle.dumps((101,'jediTaskID must be an integer'))        
-        else:
-            return pickle.dumps((False,'jediTaskID must be an integer'))
+        return pickle.dumps((False, 'jediTaskID must be an integer'))
     ret = userIF.avalancheTask(jediTaskID,user,prodRole)
     return pickle.dumps(ret)
 
@@ -2242,3 +2235,107 @@ def getTaskStatus(req,jediTaskID):
         return pickle.dumps((False,'jediTaskID must be an integer'))
     ret = userIF.getTaskStatus(jediTaskID)
     return pickle.dumps(ret)
+
+
+# reassign share
+def reassignShare(req, jedi_task_ids_pickle, share):
+    # check security
+    if not isSecure(req):
+        return pickle.dumps((False,'secure connection is required'))
+    # get DN
+    user = None
+    if req.subprocess_env.has_key('SSL_CLIENT_S_DN'):
+        user = _getDN(req)
+    # check role
+    prod_role = _isProdRoleATLAS(req)
+    if not prod_role:
+        return pickle.dumps((False,"production or pilot role required"))
+
+    jedi_task_ids = WrappedPickle.loads(jedi_task_ids_pickle)
+    _logger.debug('reassignShare: jedi_task_ids: {0}, share: {1}'.format(jedi_task_ids, share))
+
+    if not ((isinstance(jedi_task_ids, list) or (isinstance(jedi_task_ids, tuple)) and isinstance(share, str))):
+        return pickle.dumps((False, 'jedi_task_ids must be tuple/list and share must be string'))
+
+    ret = userIF.reassignShare(jedi_task_ids, share)
+    return pickle.dumps(ret)
+
+
+# list tasks in share
+def listTasksInShare(req, gshare, status):
+    # check security
+    if not isSecure(req):
+        return pickle.dumps((False,'secure connection is required'))
+    # get DN
+    user = None
+    if req.subprocess_env.has_key('SSL_CLIENT_S_DN'):
+        user = _getDN(req)
+    # check role
+    prod_role = _isProdRoleATLAS(req)
+    if not prod_role:
+        return pickle.dumps((False,"production or pilot role required"))
+
+    _logger.debug('listTasksInShare: gshare: {0}, status: {1}'.format(gshare, status))
+
+    if not ((isinstance(gshare, str) and isinstance(status, str))):
+        return pickle.dumps((False, 'gshare and status must be of type string'))
+
+    ret = userIF.listTasksInShare(gshare, status)
+    return pickle.dumps(ret)
+
+# get taskParamsMap with TaskID
+def getTaskParamsMap(req,jediTaskID):
+    try:
+        jediTaskID = long(jediTaskID)
+    except:
+        return pickle.dumps((False,'jediTaskID must be an integer'))
+    ret = userIF.getTaskParamsMap(jediTaskID)
+    return pickle.dumps(ret)
+
+# update workers
+def updateWorkers(req,harvesterID,workers):
+    # check security
+    if not isSecure(req):
+        return json.dump((False,"SSL is required"))
+    # get DN
+    user = _getDN(req)        
+    # hostname
+    host = req.get_remote_host()
+    # convert
+    try:
+        data = json.loads(workers)
+    except:
+        return json.dumps((False,"failed to load JSON"))
+    # update
+    return userIF.updateWorkers(user,host,harvesterID,data)
+
+
+# heartbeat for harvester
+def harvesterIsAlive(req,harvesterID,data=None):
+    # check security
+    if not isSecure(req):
+        return json.dump((False,"SSL is required"))
+    # get DN
+    user = _getDN(req)        
+    # hostname
+    host = req.get_remote_host()
+    # convert
+    try:
+        if data is not None:
+            data = json.loads(data)
+        else:
+            data = dict()
+    except:
+        return json.dumps((False,"failed to load JSON"))
+    # update
+    return userIF.harvesterIsAlive(user,host,harvesterID,data)
+
+
+# report stat of workers
+def reportWorkerStats(req, harvesterID, siteName, paramsList):
+    # check security
+    if not isSecure(req):
+        return json.dumps((False,"SSL is required"))
+    # update
+    ret = userIF.reportWorkerStats(harvesterID, siteName, paramsList)
+    return json.dumps(ret)

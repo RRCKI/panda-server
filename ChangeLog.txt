@@ -1,5 +1,150 @@
 Release Notes
 
+* 7/17/2017
+  * changed ES merge to choose sites with wnconnectivity
+
+* 7/12/2017
+  * added background and resourceType in getJob
+  * setting background-able flag
+
+* 7/10/2017
+  * added command_lock stuff
+
+* 7/6/2017
+  * added tighter isolation for check of concurrent running consumers
+
+* 7/3/2017
+  * added checkJobStatus
+
+* 6/29/2017
+  * added reportWorkerStats and harvesterCtl
+
+* 6/26/2017
+  * WQ-GS alignment
+
+* 5/26/2017
+  * fixed killJob with keepUnmerged not to discard evens
+  * changed SetupAtlas to make _sub when esMergeOnOS is used
+
+* 5/23/2017
+  * changed retryJob to reset computingSite to ES merge jobs
+
+* 5/17/2017
+  * introduced timeout for throttled jobs
+  * changed ES merge to avoid jobseed=es
+
+* 5/8/2017
+  * added nSimEvents
+  * changed managed to fail when nevents is not set
+
+* 5/3/2017
+  * fixed eventStatus=merged for objStore_ID=None
+
+* 5/2/2017
+  * added unified PQs
+  * added inFilePosEvtNum
+  * fixed ppE not to duplicate ES merge jobs
+
+* 4/25/2017
+  * fake co-jumbo
+  * added path_convention
+
+* 4/24/2017
+  * resource_type tagging
+
+* 4/18/2017
+  * added subDeleter
+
+* 4/14/2017
+  * added noExecStrCnv
+
+* 4/6/2017
+  * zip outputs
+
+* 3/20/2017
+  * fixed increaseAttemptNr for maxAttempt<attemptNr
+
+* 3/15/2017
+  * changed propageR to trigger recalculation of task params based on nDone
+
+* 3/14/2017
+  * removed SE check in Adder
+
+* 2/16/2017
+  * added getProxy
+  * changed killTask.py not to kill holding by default
+
+* 2/10/2017
+  * added DBProxyFiltered
+
+* 2/6/2017
+  * Protection against undef
+
+* 2/3/2017
+  * using schedconfig.dn to specify pilot owners
+
+* 2/2/2017
+  * added columns for new memory monitor
+
+* 1/30/2017
+  * fixed EiOra for empty streamName
+  * fixed updateEventRanges
+
+* 1/27/2017
+  * removed dq2 dependency
+
+* 1/23/2017
+  * added CAP_RUNNING_USER_JOBS
+
+* 1/11/2017
+  * fixed fingers for RFC proxy
+
+* 12/15/2016
+  * added mergeEsOnOS
+  * using new filename format for ES merge for rel20 or higher
+
+* 12/2/2016
+  * changed to update stateChangeTime properly
+
+* 12/1/2016
+  * removed retry for analysis in Watcher
+
+* 11/25/2016
+  * added pilot_killed
+
+* 11/24/2016
+  * Updated MySQL DB schema
+
+* 11/18/2016
+  * added task_id and account to prestaging rules
+
+* 11/14/2016
+  * made timeout value for analysis rebrokerage configurable
+  * added maxWalltime to getJob response
+
+* 11/11/2016
+  * removed dependencies on se, seprodpath, setokens in schedconfig
+
+* 11/10/2016
+  * added recoverLostFiles
+
+* 11/2/2016
+  * added es_heartbeat and es_merge_failed
+
+* 10/31/2016
+  * disabled ES file registration
+  * fixed del flag for failed ES merge jobs
+
+* 10/28/2016
+  * fixed localEsMergeNC
+
+* 10/27/2016
+  * changed rebro to kill starting jobs
+  * changed starting jobs not to update modification time
+
+* 10/20/2016
+  * reduced timeout for activated user jobs to 6h from 24h
+
 * 10/18/2016
   * jedi_events.error_code
   * jobsubstatus=pilot_finished

@@ -8,9 +8,7 @@ import sys
 import time
 import urllib
 import commands
-from DDM import ddm
 import Notifier
-import RetryMaker
 from Activator import Activator
 from pandalogger.PandaLogger import PandaLogger
 from taskbuffer.JobSpec import JobSpec
@@ -18,7 +16,6 @@ from taskbuffer.FileSpec import FileSpec
 from taskbuffer.DatasetSpec import DatasetSpec
 from brokerage.SiteMapper import SiteMapper
 from config import panda_config
-import brokerage.broker_util
 
 # logger
 _logger = PandaLogger().getLogger('Closer')
@@ -80,7 +77,7 @@ class Closer:
                     flagComplete = False
                     continue
                 # skip tobedeleted/tobeclosed 
-                if dataset.status in ['cleanup','tobeclosed','completed']:
+                if dataset.status in ['cleanup','tobeclosed','completed','deleted']:
                     _logger.debug('%s skip %s due to %s' % (self.pandaID,destinationDBlock,dataset.status))
                     continue
                 dsList.append(dataset)
@@ -138,7 +135,7 @@ class Closer:
                                 topUserDs = self.taskBuffer.queryDatasetWithMap({'name':topUserDsName})
                                 if topUserDs != None:
                                     # check status
-                                    if topUserDs.status in ['completed','cleanup','tobeclosed',
+                                    if topUserDs.status in ['completed','cleanup','tobeclosed','deleted',
                                                             'tobemerged','merging']:
                                         _logger.debug('%s skip %s due to status=%s' % (self.pandaID,topUserDsName,topUserDs.status))
                                     else:

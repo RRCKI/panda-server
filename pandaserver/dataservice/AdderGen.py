@@ -12,6 +12,7 @@ import datetime
 import commands
 import xml.dom.minidom
 import ErrorCode
+import uuid
 
 import Closer
 
@@ -50,8 +51,24 @@ class AdderGen:
         except:
             pass
         # logger
-        self.logger = LogWrapper(_logger,self.jobID)
-        
+        self.logger = LogWrapper(_logger,str(self.jobID))
+
+
+    # dump file report
+    def dumpFileReport(self,fileCatalog,attemptNr):
+        self.logger.debug("dump file report")
+        # dump Catalog into file
+        if attemptNr == None:
+            xmlFile = '%s/%s_%s_%s' % (panda_config.logdir,self.jobID,self.jobStatus,
+                                       str(uuid.uuid4()))
+        else:
+            xmlFile = '%s/%s_%s_%s_%s' % (panda_config.logdir,self.jobID,self.jobStatus,
+                                          str(uuid.uuid4()),attemptNr)
+        file = open(xmlFile,'w')
+        file.write(fileCatalog)
+        file.close()
+
+
     # main
     def run(self):
         try:
@@ -91,6 +108,11 @@ class AdderGen:
                 self.logger.error(': invalid state -> %s' % self.job.jobStatus)
             elif self.attemptNr != None and self.job.attemptNr != self.attemptNr:
                 self.logger.error('wrong attemptNr -> job=%s <> %s' % (self.job.attemptNr,self.attemptNr))
+            elif self.attemptNr is not None and self.job.jobStatus == 'transferring':
+                errMsg = 'XML with attemptNr for {0}'.format(self.job.jobStatus)
+                self.logger.error(errMsg)
+                # FIXME
+                raise RuntimeError, errMsg
             else:
                 # check file status in JEDI
                 if not self.job.isCancelled() and not self.job.taskBufferErrorCode in [taskbuffer.ErrorCode.EC_PilotRetried]:
@@ -214,7 +236,7 @@ class AdderGen:
                         error_code = self.job.ddmErrorCode
                         error_diag = self.job.ddmErrorDiag
             
-                    _logger.debug("updatejob has source %s, error_code %s and error_diag %s"%(source, error_code, error_diag))
+                    # _logger.info("updatejob has source %s, error_code %s and error_diag %s"%(source, error_code, error_diag))
                     
                     if source and error_code:
                         try:
@@ -222,7 +244,7 @@ class AdderGen:
                             retryModule.apply_retrial_rules(self.taskBuffer, self.job.PandaID, source, error_code, error_diag, self.job.attemptNr)
                             self.logger.debug("apply_retrial_rules is back")
                         except Exception as e:
-                            self.logger.debug("apply_retrial_rules excepted and needs to be investigated (%s)"%(e))
+                            self.logger.error("apply_retrial_rules excepted and needs to be investigated (%s)"%(e))
                     
                     self.job.jobStatus = 'failed'
                     for file in self.job.Files:
@@ -284,7 +306,7 @@ class AdderGen:
                     self.logger.debug("retU: %s" % retU)
                     # failed
                     if not retU[0]:
-                        self.logger.error('failed to update DB')
+                        self.logger.error('failed to update DB for pandaid={0}'.format(self.job.PandaID))
                         # unlock XML
                         try:
                             fcntl.flock(self.lockXML.fileno(), fcntl.LOCK_UN)

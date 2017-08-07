@@ -91,9 +91,9 @@ for prodUserName,wgValMap in usageBreakDownPerUser.iteritems():
 		totalUsers += 1
 		for computingSite,statValMap in siteValMap.iteritems():
 			totalRunDone += statValMap['rundone']
-		if not prodUserName in usersTotalJobs:
-			usersTotalJobs[prodUserName] = 0 
-		usersTotalJobs[prodUserName] += statValMap['running']
+			if not prodUserName in usersTotalJobs:
+				usersTotalJobs[prodUserName] = 0 
+			usersTotalJobs[prodUserName] += statValMap['running']
 
 tmpLog.debug("total users    : %s" % totalUsers)
 tmpLog.debug("total RunDone  : %s" % totalRunDone)
@@ -103,8 +103,10 @@ if totalUsers == 0:
 
 
 # cap num of running jobs
-try:
+maxNumRunPerUser = taskBuffer.getConfigValue('prio_mgr','CAP_RUNNING_USER_JOBS')
+if maxNumRunPerUser is None:
 	maxNumRunPerUser = 10000
+try:
 	tmpLog.debug("cap running jobs : max={0}".format(maxNumRunPerUser))
 	throttledUsers = taskBuffer.getThrottledUsers()
 	for prodUserName,tmpNumTotal in usersTotalJobs.iteritems():

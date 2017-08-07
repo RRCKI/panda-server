@@ -3,6 +3,7 @@ import sys
 import json
 import types
 import shlex
+import time
 import datetime
 import ProcessGroups
 import EventServiceUtils
@@ -11,7 +12,6 @@ from DBProxyPool import DBProxyPool
 from brokerage.SiteMapper import SiteMapper
 from dataservice.Setupper import Setupper
 from dataservice.Closer import Closer
-from dataservice.TaLauncher import TaLauncher
 from dataservice.ProcessLimiter import ProcessLimiter
 
 # logger
@@ -430,12 +430,13 @@ class TaskBuffer:
 
     # lock jobs for reassign
     def lockJobsForReassign(self,tableName,timeLimit,statList,labels,processTypes,sites,clouds,
-                            useJEDI=False,onlyReassignable=False,useStateChangeTime=False):
+                            useJEDI=False,onlyReassignable=False,useStateChangeTime=False,
+                            getEventService=False):
         # get DB proxy
         proxy = self.proxyPool.getProxy()
         # exec
         res = proxy.lockJobsForReassign(tableName,timeLimit,statList,labels,processTypes,sites,clouds,
-                                        useJEDI,onlyReassignable,useStateChangeTime)
+                                        useJEDI,onlyReassignable,useStateChangeTime,getEventService)
         # release DB proxy
         self.proxyPool.putProxy(proxy)
         # return
@@ -533,12 +534,15 @@ class TaskBuffer:
                 if not allDone:
                     job.jobStatus = 'holding'
             elif EventServiceUtils.isJumboJob(job):
-                # check if there are done events
-                hasDone = proxy.hasDoneEvents(job.jediTaskID,job.PandaID)
-                if hasDone:
-                    job.jobStatus = 'finished'
+                if job.jobStatus in ['defined','assigned','activated']:
+                    pass
                 else:
-                    job.jobStatus = 'failed'
+                    # check if there are done events
+                    hasDone = proxy.hasDoneEvents(job.jediTaskID,job.PandaID)
+                    if hasDone:
+                        job.jobStatus = 'finished'
+                    else:
+                        job.jobStatus = 'failed'
             if job.jobStatus == 'failed' and job.prodSourceLabel == 'user' and not inJobsDefined:
                 # keep failed analy jobs in Active4
                 ret = proxy.updateJob(job,inJobsDefined,oldJobStatus=oldJobStatus)
@@ -639,14 +643,14 @@ class TaskBuffer:
 
 
     # archive jobs
-    def archiveJobs(self,jobs,inJobsDefined):
+    def archiveJobs(self,jobs,inJobsDefined,fromJobsWaiting=False):
         # get DB proxy
         proxy = self.proxyPool.getProxy()        
         # loop over all jobs
         returns = []
         for job in jobs:
             # update DB
-            ret = proxy.archiveJob(job,inJobsDefined)
+            ret = proxy.archiveJob(job,inJobsDefined,fromJobsWaiting=fromJobsWaiting)
             returns.append(ret[0]) 
         # release proxy
         self.proxyPool.putProxy(proxy)
@@ -696,18 +700,23 @@ class TaskBuffer:
         # release proxy
         self.proxyPool.putProxy(proxy)
         return retStr
-        
-    
+
+
     # get jobs
     def getJobs(self,nJobs,siteName,prodSourceLabel,cpu,mem,diskSpace,node,timeout,computingElement,
                 atlasRelease,prodUserID,getProxyKey,countryGroup,workingGroup,allowOtherCountry,
-                taskID):
+                taskID,background,resourceType):
         # get DBproxy
         proxy = self.proxyPool.getProxy()
         # get waiting jobs
+        t_before = time.time()
         jobs,nSent = proxy.getJobs(nJobs,siteName,prodSourceLabel,cpu,mem,diskSpace,node,timeout,computingElement,
                                    atlasRelease,prodUserID,countryGroup,workingGroup,allowOtherCountry,
-                                   taskID)
+                                   taskID,background,resourceType)
+        t_after = time.time()
+        t_total = t_after - t_before
+        _logger.debug("getJobs : took {0}s for {1} nJobs={2} prodSourceLabel={3}"
+                               .format(t_total, siteName, nJobs, prodSourceLabel))
         # release proxy
         self.proxyPool.putProxy(proxy)
         # get Proxy Key
@@ -721,7 +730,7 @@ class TaskBuffer:
             self.proxyPool.putProxy(proxy)
         # return
         return jobs+[nSent,proxyKey]
-        
+
 
     # run task assignment
     def runTaskAssignment(self,jobs):
@@ -745,7 +754,7 @@ class TaskBuffer:
         self.proxyPool.putProxy(proxy)
         # run setupper
         if newJobs != []:
-            TaLauncher(self,newJobs).start()
+            pass
         # return clouds
         return retList
 
@@ -1157,6 +1166,7 @@ class TaskBuffer:
             if not tmpJob.prodSourceLabel in ['managed','test']:
                 return "ERROR: Non production job : prodSourceLabel=%s. This method is only for production jobs" % tmpJob.prodSourceLabel
             # release and trf
+            tmpAtls = tmpJob.AtlasRelease.split("\n") 
             tmpRels = tmpJob.homepackage.split("\n")
             tmpPars = tmpJob.jobParameters.split("\n")
             tmpTrfs = tmpJob.transformation.split("\n")
@@ -1183,7 +1193,11 @@ class TaskBuffer:
             scrStr += "\n#transform commands\n\n"
             for tmpIdx,tmpRel in enumerate(tmpRels):
                 # asetup
-                scrStr += "asetup --cmtconfig=%s %s,%s\n" % tuple([tmpJob.cmtConfig]+tmpRel.split("/"))
+                atlRel = re.sub('Atlas-', '', tmpAtls[tmpIdx])
+                atlTags = tmpRel.split("/")
+                if atlRel != '' and atlRel not in atlTags and re.search('^\d+\.\d+\.\d+$', atlRel) is None:
+                    atlTags.append(atlRel)
+                scrStr += "asetup --cmtconfig=%s %s\n" % (tmpJob.cmtConfig, ','.join(atlTags))
                 # athenaMP
                 if not tmpJob.coreCount in ['NULL',None] and tmpJob.coreCount > 1:
                     scrStr += "export ATHENA_PROC_NUMBER=%s\n" % tmpJob.coreCount
@@ -1220,7 +1234,22 @@ class TaskBuffer:
         # kill jobs
         pandaIDforCloserMap = {}
         for id in ids:
-            ret,userInfo = proxy.killJob(id,user,code,prodManager,True,wgProdRole,killOptions)
+            # retry event service merge
+            toKill = True
+            if 'keepUnmerged' in killOptions:
+                tmpJobSpec = proxy.peekJob(id,True,True,False,False,False)
+                if tmpJobSpec is not None:
+                    if EventServiceUtils.isEventServiceMerge(tmpJobSpec):
+                        # retry ES merge jobs not to discard events
+                        proxy.retryJob(id,{},getNewPandaID=True,attemptNr=tmpJobSpec.attemptNr,
+                                       recoverableEsMerge=True)
+                    elif EventServiceUtils.isEventServiceJob(tmpJobSpec):
+                        # trigger ppE for ES jobs to properly trigger subsequent procedures
+                        ret = proxy.archiveJob(tmpJobSpec, tmpJobSpec.jobStatus in ['defined','assigned'])
+                        toKill = False
+                        userInfo = {'prodSourceLabel': None}
+            if toKill:
+                ret,userInfo = proxy.killJob(id,user,code,prodManager,True,wgProdRole,killOptions)
             rets.append(ret)
             if ret and userInfo['prodSourceLabel'] in ['user','managed','test']:
                 jobIDKey = (userInfo['prodUserID'],userInfo['jobDefinitionID'],userInfo['jobsetID'])
@@ -3021,17 +3050,6 @@ class TaskBuffer:
         return ret
 
 
-    # get shares
-    def getShares(self, parents=''):
-        # get DBproxy
-        proxy = self.proxyPool.getProxy()
-        # exec
-        retVal = proxy.getShares(parents)
-        # release proxy
-        self.proxyPool.putProxy(proxy)
-        # return
-        return retVal
-
 
     # get co-jumbo jobs to be finished
     def getCoJumboJobsToBeFinished(self,timeLimit,minPriority):
@@ -3121,6 +3139,334 @@ class TaskBuffer:
         self.proxyPool.putProxy(proxy)
         # return
         return res
+
+
+    # get event statistics
+    def getEventStat(self, jediTaskID, PandaID):
+        # get DB proxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        res = proxy.getEventStat(jediTaskID, PandaID)
+        # release DB proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return res
+
+
+    # get the HS06 distribution for global shares
+    def get_hs_distribution(self):
+        # get DB proxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        res = proxy.get_hs_distribution()
+        # release DB proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return res
+
+
+    # reassign share
+    def reassignShare(self, jedi_task_ids, share_dest):
+        # get DB proxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        res = proxy.reassignShare(jedi_task_ids, share_dest)
+        # release DB proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return res
+
+
+    # list tasks in share
+    def listTasksInShare(self, gshare, status):
+        # get DB proxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        res = proxy.listTasksInShare(gshare, status)
+        # release DB proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return res
+
+
+    def is_valid_share(self, share_name):
+        """
+        Checks whether the share is a valid leave share
+        """
+        # get DB proxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        res = proxy.is_valid_share(share_name)
+        # release DB proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return res
+
+
+    def get_share_for_task(self, task):
+        """
+        Return the share based on a task specification
+        """
+        # get DB proxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        res = proxy.get_share_for_task(task)
+        # release DB proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return res
+
+
+    def get_share_for_job(self, job):
+        """
+        Return the share based on a task specification
+        """
+        # get DB proxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        res = proxy.get_share_for_job(job)
+        # release DB proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return res
+
+
+    def getTaskParamsMap(self,jediTaskID):
+        """
+        Return the taskParamsMap
+        """
+        # get DB proxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        res = proxy.getTaskPramsPanda(jediTaskID)
+        # release DB proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return res
+
+
+    def getCommands(self, harvester_id, n_commands):
+        """
+        Get n commands for a particular harvester instance
+        """
+        # get DB proxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        res = proxy.getCommands(harvester_id, n_commands)
+        # release DB proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return res
+
+
+    def ackCommands(self, command_ids):
+        """
+        Acknowledge a list of command IDs
+        """
+        # get DB proxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        res = proxy.ackCommands(command_ids)
+        # release DB proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return res
+
+
+    # send command to harvester or lock command
+    def commandToHarvester(self, harvester_ID, command, ack_requested, status, lockInterval=None, comInterval= None, params=None):
+        # get DB proxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        res = proxy.commandToHarvester(harvester_ID, command, ack_requested, status, lockInterval, comInterval, params)
+        # release DB proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return res
+
+
+    # report stat of workers
+    def reportWorkerStats(self, harvesterID, siteName, paramsList):
+        # get DB proxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        res = proxy.reportWorkerStats(harvesterID, siteName, paramsList)
+        # release DB proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return res
+
+
+    # get command locks
+    def getCommandLocksHarvester(self, harvester_ID, command, lockedBy, 
+                                 lockInterval, commandInterval):
+        # get DB proxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        res = proxy.getCommandLocksHarvester(harvester_ID, command, lockedBy, 
+                                             lockInterval, commandInterval)
+        # release DB proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return res
+
+
+    # release command lock
+    def releaseCommandLockHarvester(self, harvester_ID, command, computingSite, resourceType, lockedBy):
+        # get DB proxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        res = proxy.releaseCommandLockHarvester(harvester_ID, command, computingSite, resourceType, lockedBy)
+        # release DB proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return res
+
+
+    # get active harvesters
+    def getActiveHarvesters(self, interval):
+        # get DB proxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        res = proxy.getActiveHarvesters(interval)
+        # release DB proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return res
+
+
+    # update workers
+    def updateWorkers(self, harvesterID, data):
+        """
+        Update workers
+        """
+        # get DB proxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        res = proxy.updateWorkers(harvesterID, data)
+        # release DB proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return res
+
+
+    # heartbeat for harvester
+    def harvesterIsAlive(self, user, host, harvesterID, data):
+        """
+        update harvester instance information
+        """
+        # get DB proxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        res = proxy.harvesterIsAlive(user,host,harvesterID,data)
+        # release DB proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return res
+
+
+    def storePilotLog(self, panda_id, pilot_log):
+        """
+        Store the pilot log in the pandalog table
+        """
+        # get DB proxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        res = proxy.storePilotLog(panda_id, pilot_log)
+        # release DB proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return res
+
+
+    # read the resource types from the DB
+    def load_resource_types(self):
+        # get DBproxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        ret_val = proxy.load_resource_types()
+        # release proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return ret_val
+
+
+    # get the resource of a task
+    def get_resource_type_task(self, task_spec):
+        # get DBproxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        ret_val = proxy.get_resource_type_task(task_spec)
+        # release proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return ret_val
+
+
+    def reset_resource_type_task(self, jedi_task_id, use_commit = True):
+        # get DBproxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        ret_val = proxy.reset_resource_type_task(jedi_task_id, use_commit)
+        # release proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return ret_val
+
+
+    # get the resource of a task
+    def get_resource_type_job(self, job_spec):
+        # get DBproxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        ret_val = proxy.get_resource_type_job(job_spec)
+        # release proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return ret_val
+
+
+    # get activated job statistics per resource
+    def getActivatedJobStatisticsPerResource(self, siteName):
+        # get DBproxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        ret_val = proxy.getActivatedJobStatisticsPerResource(siteName)
+        # release proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return ret_val
+
+
+    # check Job status
+    def checkJobStatus(self, pandaIDs):
+        try:
+            pandaIDs = pandaIDs.split(',')
+        except:
+            pandaIDs = []
+        # get DBproxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        retList = []
+        for pandaID in pandaIDs:
+            ret = proxy.checkJobStatus(pandaID)
+            retList.append(ret)
+        # release proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return retList
+
+
+    # get stat of workers
+    def getWorkerStats(self, siteName):
+        # get DBproxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        ret = proxy.getWorkerStats(siteName)
+        # release proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return ret
 
 
 

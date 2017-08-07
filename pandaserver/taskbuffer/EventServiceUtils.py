@@ -11,6 +11,7 @@ ST_discarded = 5
 ST_done      = 6
 ST_failed    = 7
 ST_fatal     = 8
+ST_merged    = 9
 
 
 
@@ -22,6 +23,7 @@ singleToken = 'sc'
 singleConsumerType = {'runonce':  '1',
                       'storeonce':'2'}
 dynamicNumEventsToken = 'dy'
+mergeAtOsToken = 'mo'
 
 # values for job.eventService
 esJobFlagNumber = 1
@@ -35,6 +37,10 @@ coJumboJobFlagNumber = 5
 eventTableIsJumbo = 1
 
 
+# siteid for waiting co-jumbo jobs
+siteIdForWaitingCoJumboJobs = 'WAITING_CO_JUMBO'
+
+
 # relation type for jobsets
 relationTypeJS_ID = 'jobset_id'
 relationTypeJS_Retry = 'jobset_retry'
@@ -43,6 +49,10 @@ relationTypesForJS = [relationTypeJS_ID,relationTypeJS_Retry]
 
 # suffix for ES dataset and files to register to DDM
 esSuffixDDM = '.events'
+
+
+# default max number of ES job attempt
+defMaxAttemptEsJob = 3
 
 
 # encode file info
@@ -165,6 +175,8 @@ def setEventServiceMerge(job):
     try:
         # set ES flag
         job.eventService = esMergeJobFlagNumber
+        # set gshare to express
+        job.gshare = 'Express'
         # set flag for merging
         if job.specialHandling == None:
             job.specialHandling = esMergeToken
@@ -286,3 +298,32 @@ def isJumboJob(job):
 # check if cooperative with jumbo job
 def isCoJumboJob(job):
     return job.eventService == coJumboJobFlagNumber
+
+
+
+# set header for merge at OS
+def setHeaderForMergeAtOS(specialHandling):
+    if specialHandling == None:
+        specialHandling = ''
+    tokens = specialHandling.split(',')
+    while True:
+        try:
+            tokens.remove('')
+        except:
+            break
+    if mergeAtOsToken not in tokens:
+        tokens.append(mergeAtOsToken)
+    return ','.join(tokens)
+
+
+
+# check if specialHandling for merge at OS
+def isMergeAtOS(specialHandling):
+    try:
+        if specialHandling != None:
+            if mergeAtOsToken in specialHandling.split(','):
+                return True
+    except:
+        pass
+    return False
+

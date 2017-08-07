@@ -1,28 +1,27 @@
-import time
 import threading
-import sys
+import traceback
 import aux
 from aux import *
 from datetime import datetime, timedelta
 
-from sqlalchemy import exc
-
 from config import panda_config
 from pandalogger.PandaLogger import PandaLogger
 import db_interface as dbif
-from configurator.models import Schedconfig
 from taskbuffer.TaskBuffer import taskBuffer
 
 _logger = PandaLogger().getLogger('configurator')
 _session = dbif.get_session()
 
+# Definitions of roles
+WRITE_LAN = 'write_lan'
+READ_LAN = 'read_lan'
 
 class Configurator(threading.Thread):
 
     def __init__(self):
         threading.Thread.__init__(self)
 
-        if hasattr(panda_config,'AGIS_URL_SITES'):
+        if hasattr(panda_config, 'AGIS_URL_SITES'):
             self.AGIS_URL_SITES = panda_config.AGIS_URL_SITES
         else:
             self.AGIS_URL_SITES = 'http://atlas-agis-api.cern.ch/request/site/query/?json&vo_name=atlas&state=ACTIVE'
@@ -31,8 +30,8 @@ class Configurator(threading.Thread):
         _logger.debug('Done')
         self.site_endpoint_dict = self.get_site_endpoint_dictionary()
 
-        if hasattr(panda_config,'AGIS_URL_DDMENDPOINTS'):
-             self.AGIS_URL_DDMENDPOINTS = panda_config.AGIS_URL_DDMENDPOINTS
+        if hasattr(panda_config, 'AGIS_URL_DDMENDPOINTS'):
+            self.AGIS_URL_DDMENDPOINTS = panda_config.AGIS_URL_DDMENDPOINTS
         else:
             self.AGIS_URL_DDMENDPOINTS = 'http://atlas-agis-api.cern.ch/request/ddmendpoint/query/list/?json&state=ACTIVE'
         _logger.debug('Getting DDM endpoints dump...')
@@ -42,16 +41,16 @@ class Configurator(threading.Thread):
         self.endpoint_token_dict = self.parse_endpoints()
         _logger.debug('Done')
 
-        if hasattr(panda_config,'AGIS_URL_SCHEDCONFIG'):
-             self.AGIS_URL_SCHEDCONFIG = panda_config.AGIS_URL_SCHEDCONFIG
+        if hasattr(panda_config, 'AGIS_URL_SCHEDCONFIG'):
+            self.AGIS_URL_SCHEDCONFIG = panda_config.AGIS_URL_SCHEDCONFIG
         else:
             self.AGIS_URL_SCHEDCONFIG = 'http://atlas-agis-api.cern.ch/request/pandaqueue/query/list/?json&preset=schedconf.all&vo_name=atlas&state=ACTIVE'
         _logger.debug('Getting schedconfig dump...')
         self.schedconfig_dump = aux.get_dump(self.AGIS_URL_SCHEDCONFIG)
         _logger.debug('Done')
 
-        if hasattr(panda_config,'AGIS_URL_DDMBLACKLIST'):
-             self.AGIS_URL_DDMBLACKLIST = panda_config.AGIS_URL_DDMBLACKLIST
+        if hasattr(panda_config, 'AGIS_URL_DDMBLACKLIST'):
+            self.AGIS_URL_DDMBLACKLIST = panda_config.AGIS_URL_DDMBLACKLIST
         else:
             self.AGIS_URL_DDMBLACKLIST = 'http://atlas-agis-api.cern.ch/request/ddmendpointstatus/query/list/?json&fstate=OFF&activity=w'
         _logger.debug('Getting schedconfig dump...')
@@ -59,8 +58,8 @@ class Configurator(threading.Thread):
         _logger.debug('Blacklisted endpoints {0}'.format(self.blacklisted_endpoints))
         _logger.debug('Done')
         
-        if hasattr(panda_config,'RUCIO_RSE_USAGE'):
-             self.RUCIO_RSE_USAGE = panda_config.RUCIO_RSE_USAGE
+        if hasattr(panda_config, 'RUCIO_RSE_USAGE'):
+            self.RUCIO_RSE_USAGE = panda_config.RUCIO_RSE_USAGE
         else:
             self.RUCIO_RSE_USAGE = 'https://rucio-hadoop.cern.ch/dumps/rse_usage/current.json'
         _logger.debug('Getting Rucio RSE usage dump...')
@@ -81,7 +80,7 @@ class Configurator(threading.Thread):
         else:
             role = 'satellite'
         
-        return (name, role, state, tier_level)
+        return name, role, state, tier_level
 
     def parse_endpoints(self):
         """
@@ -124,9 +123,20 @@ class Configurator(threading.Thread):
         included_sites = []
         ddm_endpoints_list = []
         panda_sites_list = []
-        
+
+        # Old relationship information based on DDM field in AGIS.
+        # Used for atlas_panda.panda_site.default_ddm_endpoint and atlas_panda.panda_site.storage_site_name
         relationship_dict = self.process_schedconfig_dump()
-        
+
+        # New relationship information based on astorage0 field in AGIS.
+        # Used to fill atlas_panda.panda_ddm_relation table
+        try:
+            panda_ddm_relation_dict = self.get_panda_ddm_relation()
+        except:
+            # Temporary protection to prevent issues
+            _logger.critical('get_panda_ddm_relation excepted with {0}'.format(traceback.print_exc()))
+            panda_ddm_relation_dict = {}
+
         # Iterate the site dump
         for site in self.site_dump:
             # Add the site info to a list
@@ -156,23 +166,30 @@ class Configurator(threading.Thread):
                 except KeyError:
                     continue
 
-                # Get the SRM space
-                try: 
-                    space_used = self.rse_usage[ddm_endpoint_name]['srm']['used']/GB
-                    space_free = self.rse_usage[ddm_endpoint_name]['srm']['free']/GB
+                # Get the storage space
+                try:
+                    space_used = self.rse_usage[ddm_endpoint_name]['storage']['used']/GB
+                    _logger.debug('process_site_dumps: endpoint {0} has used space {1}GB'.format(ddm_endpoint_name,
+                                                                                                 space_used))
+                    space_free = self.rse_usage[ddm_endpoint_name]['storage']['free']/GB
+                    _logger.debug('process_site_dumps: endpoint {0} has free space {1}GB'.format(ddm_endpoint_name,
+                                                                                                 space_free))
                     space_total = space_used + space_free
-                    space_timestamp = datetime.strptime(self.rse_usage[ddm_endpoint_name]['srm']['updated_at'],
+                    space_timestamp = datetime.strptime(self.rse_usage[ddm_endpoint_name]['storage']['updated_at'],
                                                         '%Y-%m-%d %H:%M:%S')
+                    _logger.debug('process_site_dumps: endpoint {0} has space timestamp {1}'.format(ddm_endpoint_name,
+                                                                                                    space_timestamp))
+
                 except (KeyError, ValueError):
                     space_used, space_free, space_total, space_timestamp = None, None, None, None
-                    _logger.error('process_site_dumps: no rse SRM usage information for {0}'.format(ddm_endpoint_name))
+                    _logger.warning('process_site_dumps: no rse storage usage information for {0}'.format(ddm_endpoint_name))
 
                 # Get the Expired space
                 try:
                     space_expired = self.rse_usage[ddm_endpoint_name]['expired']['used']/GB
                 except KeyError:
                     space_expired = 0
-                    _logger.error('process_site_dumps: no rse EXPIRED usage information for {0}'
+                    _logger.warning('process_site_dumps: no rse EXPIRED usage information for {0}'
                                   .format(ddm_endpoint_name))
 
                 ddm_spacetoken_state = site['ddmendpoints'][ddm_endpoint_name]['state']
@@ -215,7 +232,7 @@ class Configurator(threading.Thread):
                         storage_site_name = relationship_info['storage_site_name']
                         is_local = relationship_info['is_local']
                     except KeyError:
-                        _logger.error('process_site_dumps: Investigate why panda_site_name {0} not in relationship_info dictionary'
+                        _logger.warning('process_site_dumps: Investigate why panda_site_name {0} not in relationship_info dictionary'
                                       .format(panda_site_name))
                         default_ddm_endpoint = None
                         storage_site_name = None
@@ -229,7 +246,66 @@ class Configurator(threading.Thread):
                                              'storage_site_name': storage_site_name,
                                              'is_local': is_local})
         
-        return sites_list, panda_sites_list, ddm_endpoints_list
+        return sites_list, panda_sites_list, ddm_endpoints_list, panda_ddm_relation_dict
+
+    def get_panda_ddm_relation(self):
+        """
+        Gets the DDM endpoints assigned to a panda queue, based on the AGIS astorage0 field of the panda queue definition
+        """
+        relation_list = []
+
+        # iterate on panda queues
+        for long_panda_site_name in self.schedconfig_dump:
+            panda_site_name = self.schedconfig_dump[long_panda_site_name]['panda_resource']
+            cpu_site_name = self.schedconfig_dump[long_panda_site_name]['atlas_site']
+            dict_ddm_endpoint = {}
+
+            # get the astorages0 field
+            if self.schedconfig_dump[long_panda_site_name]['astorages0']:
+                astorages = self.schedconfig_dump[long_panda_site_name]['astorages0']
+
+                # iterate the storages
+                for role in astorages:
+                    for site in astorages[role]:
+                        if astorages[role][site]:
+                            for ddm in astorages[role][site]:
+                                dict_ddm_endpoint.setdefault(ddm, []).append(role)
+                        else:  # an empty fields means we need to take all endpoints
+                            ddm_list_isempty = self.site_endpoint_dict[site]
+                            for ddm in ddm_list_isempty:
+                                dict_ddm_endpoint.setdefault(ddm, []).append(role)
+                order = 1
+                default_set = False
+                for ddm_endpoint_name, roles in dict_ddm_endpoint.items():
+                    try:
+                        storage_site_name = self.endpoint_token_dict[ddm_endpoint_name]['site_name']
+                    except KeyError:
+                        _logger.warning("Skipped {0}, because primary associated DDM endpoint {1} not found (e.g. in TEST mode or DISABLED)"
+                                        .format(long_panda_site_name, ddm_endpoint_name))
+                        continue
+                    # figure out if the storage is local to the cpu
+                    if storage_site_name == cpu_site_name \
+                            and self.schedconfig_dump[long_panda_site_name]['resource_type'] not in ['cloud', 'hpc']:
+                        is_local = 'Y'
+                    else:
+                        is_local = 'N'
+                    # we consider the first write_lan endpoint to be default one
+                    is_default = 'N'
+                    if not default_set and WRITE_LAN in roles:
+                        default_set = True
+                        is_default = 'Y'
+                    # add the values to the list of relations if the ddm endpoint is valid
+                    if ddm_endpoint_name in self.endpoint_token_dict:
+                        relation_list.append({'long_panda_site_name': long_panda_site_name,
+                                              'panda_site_name': panda_site_name,
+                                              'ddm_site': ddm_endpoint_name,
+                                              'roles': ','.join(roles),
+                                              'is_default': is_default,
+                                              'is_local': is_local,
+                                              'ord': order})
+                        order += 1
+
+        return relation_list
 
     def process_schedconfig_dump(self):
         """
@@ -237,8 +313,7 @@ class Configurator(threading.Thread):
         and prepares a format loadable to the DB
         """
 
-        # relationship_tuples = dbif.read_panda_ddm_relationships_schedconfig(_session) #data almost as it comes from schedconfig
-        relationships_dict = {} # data to be loaded to configurator DB
+        relationships_dict = {}  # data to be loaded to configurator DB
         
         for long_panda_site_name in self.schedconfig_dump:
             
@@ -273,7 +348,7 @@ class Configurator(threading.Thread):
         Point out sites, panda sites and DDM endpoints that are missing in one of the sources 
         """
         # Check for site inconsistencies
-        agis_sites = set([site['name'] for site in self.site_dump if site['state']=='ACTIVE'])
+        agis_sites = set([site['name'] for site in self.site_dump if site['state'] == 'ACTIVE'])
         _logger.debug("Sites in AGIS {0}".format(agis_sites))
         configurator_sites = dbif.read_configurator_sites(_session)
         _logger.debug("Sites in Configurator {0}".format(configurator_sites))
@@ -292,7 +367,7 @@ class Configurator(threading.Thread):
             if site not in schedconfig_sites:
                 missing.append('Schedconfig')
             if missing:
-                _logger.error("SITE inconsistency: {0} was not found in {1}".format(site, missing))
+                _logger.warning("SITE inconsistency: {0} was not found in {1}".format(site, missing))
 
         # Check for panda-site inconsistencies
         agis_panda_sites = set([self.schedconfig_dump[long_panda_site_name]['panda_resource']
@@ -315,7 +390,7 @@ class Configurator(threading.Thread):
             if site not in schedconfig_panda_sites:
                 missing.append('Schedconfig')
             if missing:
-                _logger.error("PanDA SITE inconsistency: {0} was not found in {1}".format(site, missing))
+                _logger.warning("PanDA SITE inconsistency: {0} was not found in {1}".format(site, missing))
 
         # Check for DDM endpoint inconsistencies
         agis_ddm_endpoints = set([ddm_endpoint_name for ddm_endpoint_name in self.endpoint_token_dict])
@@ -333,7 +408,7 @@ class Configurator(threading.Thread):
             if site not in configurator_ddm_endpoints:
                 missing.append('Configurator')
             if missing:
-                _logger.error("DDM ENDPOINT inconsistency: {0} was not found in {1}".format(site, missing))
+                _logger.warning("DDM ENDPOINT inconsistency: {0} was not found in {1}".format(site, missing))
 
         self.cleanup_configurator(agis_sites, agis_panda_sites, agis_ddm_endpoints, configurator_sites,
                                   configurator_panda_sites, configurator_ddm_endpoints)
@@ -358,33 +433,24 @@ class Configurator(threading.Thread):
         ddm_endpoints_to_delete = configurator_ddm_endpoints - agis_ddm_endpoints
         dbif.delete_ddm_endpoints(_session, ddm_endpoints_to_delete)
 
-    def get_corepower_and_cleanup(self):
-        """
-        Get the snapshot of the current corepower provided by each site. Delete old stats
-        """
-        dbif.get_cores_by_site(_session)
-        dbif.clean_site_stats_key(_session, 'total_corepower', days=7)
-
     def run(self):
         """
         Principal function
         """
         # Get pre-processed AGIS dumps
-        sites_list, panda_sites_list, ddm_endpoints_list = self.process_site_dumps()
+        sites_list, panda_sites_list, ddm_endpoints_list, panda_ddm_relation_dict = self.process_site_dumps()
 
         # Persist the information to the PanDA DB
         dbif.write_sites_db(_session, sites_list)
         dbif.write_panda_sites_db(_session, panda_sites_list)
         dbif.write_ddm_endpoints_db(_session, ddm_endpoints_list)
-        # dbif.write_panda_ddm_relations(_session, relationships_list)
-
-        #Get a snapshot of the corecount usage by site
-        self.get_corepower_and_cleanup()
+        dbif.write_panda_ddm_relation_db(_session, panda_ddm_relation_dict)
 
         # Do a data quality check
         self.consistency_check()
         
         return True
+
 
 class NetworkConfigurator(threading.Thread):
 
@@ -393,7 +459,7 @@ class NetworkConfigurator(threading.Thread):
 
         taskBuffer.init(panda_config.dbhost, panda_config.dbpasswd, nDBConnection=1)
 
-        if hasattr(panda_config,'NWS_URL'):
+        if hasattr(panda_config, 'NWS_URL'):
             self.NWS_URL = panda_config.NWS_URL
         else:
             self.NWS_URL = 'http://atlas-adc-netmetrics-lb.cern.ch/metrics/latest.json'
@@ -437,14 +503,14 @@ class NetworkConfigurator(threading.Thread):
 
             except ValueError:
                 _logger.error("Json wrongly formatted. Expected key with format src:dst, but found key {0}"
-                               .format(src_dst))
+                              .format(src_dst))
                 continue
 
             # Transferred files
             try:
                 done = self.nws_dump[src_dst][FILES][DONE]
                 for activity in [PROD_INPUT, PROD_OUTPUT, EXPRESS]:
-                    if not done.has_key(activity):
+                    if activity not in done:
                         continue
                     try:
                         updated_at = datetime.strptime(done[activity][TIMESTAMP], '%Y-%m-%dT%H:%M:%S')
@@ -464,7 +530,7 @@ class NetworkConfigurator(threading.Thread):
             try:
                 queued = self.nws_dump[src_dst][FILES][QUEUED]
                 for activity in [PROD_INPUT, PROD_OUTPUT, EXPRESS]:
-                    if not queued.has_key(activity):
+                    if activity not in queued:
                         continue
                     try:
                         updated_at = datetime.strptime(queued[activity][TIMESTAMP], '%Y-%m-%dT%H:%M:%S')
@@ -537,7 +603,7 @@ class NetworkConfigurator(threading.Thread):
                 if not src or not dst:
                     continue
 
-                #Prepare data for bulk upserts
+                # Prepare data for bulk upserts
                 data.append((src, dst, 'AGIS_closeness', closeness, ts))
 
             except KeyError:
@@ -574,7 +640,7 @@ class NetworkConfigurator(threading.Thread):
 if __name__ == "__main__":
 
     # If no argument, call the basic configurator
-    if len(sys.argv)==1:
+    if len(sys.argv) == 1:
         t1 = time.time()
         configurator = Configurator()
         if not configurator.run():

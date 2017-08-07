@@ -11,23 +11,17 @@ import commands
 import traceback
 import threading
 import userinterface.Client as Client
-from dataservice.DDM import ddm
-from dataservice.DDM import toa
-from dataservice.DDM import dashBorad
 from dataservice.DDM import rucioAPI
 from taskbuffer.OraDBProxy import DBProxy
 from taskbuffer.TaskBuffer import taskBuffer
 from pandalogger.PandaLogger import PandaLogger
 from jobdispatcher.Watcher import Watcher
 from brokerage.SiteMapper import SiteMapper
-from dataservice.Adder import Adder
 from dataservice.Finisher import Finisher
 from dataservice.MailUtils import MailUtils
 from dataservice import DataServiceUtils
 from dataservice.Closer import Closer
 from taskbuffer import ProcessGroups
-import brokerage.broker_util
-import brokerage.broker
 import taskbuffer.ErrorCode
 import dataservice.DDM
 
@@ -39,9 +33,6 @@ passwd = panda_config.dbpasswd
 _logger = PandaLogger().getLogger('datasetManager')
 
 _logger.debug("===================== start =====================")
-
-# use native DQ2
-ddm.useDirectDQ2()
 
 # memory checker
 def _memoryCheck(str):
@@ -267,16 +258,20 @@ class CloserThr (threading.Thread):
                     status,out = rucioAPI.getMetaData(name)
                     if status == True:
                         if out != None:
-                            status,out = ddm.DQ2.main('freezeDataset',name)
+                            try:
+                                rucioAPI.closeDataset(name)
+                                status = True
+                            except:
+                                errtype,errvalue = sys.exc_info()[:2]
+                                out = 'failed to freeze : {0} {1}'.format(errtype,errvalue)
+                                status = False
                         else:
                             # dataset not exist
-                            status,out = 0,''
+                            status,out = True,''
                             dsExists = False
                 else:
-                    status,out = 0,''
-                if status != 0 and out.find('DQFrozenDatasetException') == -1 and \
-                       out.find("DQUnknownDatasetException") == -1 and out.find("DQSecurityException") == -1 and \
-                       out.find("DQDeletedDatasetException") == -1 and out.find("DQUnknownDatasetException") == -1:
+                    status,out = True,''
+                if not status:
                     _logger.error('{0} failed to close with {1}'.format(name,out))
                 else:
                     self.proxyLock.acquire()
@@ -293,19 +288,18 @@ class CloserThr (threading.Thread):
                     if not dsExists:
                         continue
                     # count # of files
-                    status,out = ddm.DQ2.main('getNumberOfFiles',name)
-                    if status != 0:
-                        if not "DQUnknownDatasetException" in out:
+                    status,out = rucioAPI.getNumberOfFiles(name)
+                    if status is not True:
+                        if status is False:
                             _logger.error(out)
                     else:
                         _logger.debug(out)                                            
                         try:
                             nFile = int(out)
-                            _logger.debug(nFile)
                             if nFile == 0:
                                 # erase dataset
                                 _logger.debug('erase %s' % name)
-                                status,out = ddm.DQ2.main('eraseDataset',name)
+                                status,out = rucioAPI.eraseDataset(name)
                                 _logger.debug('OK with %s' % name)
                         except:
                             pass
@@ -424,22 +418,26 @@ class Freezer (threading.Thread):
                                     _logger.debug("failed to get merging job for %s " % name)
                             else:
                                 _logger.debug("failed to get merging file for %s " % name)
-                            status,out = 0,''
+                            status,out = True,''
                         elif dsExists:
                             # check if dataset exists
                             status,out = rucioAPI.getMetaData(name)
                             if status == True:
                                 if out != None:
-                                    status,out = ddm.DQ2.main('freezeDataset',name)
+                                    try:
+                                        rucioAPI.closeDataset(name)
+                                        status = True
+                                    except:
+                                        errtype,errvalue = sys.exc_info()[:2]
+                                        out = 'failed to freeze : {0} {1}'.format(errtype,errvalue)
+                                        status = False
                                 else:
                                     # dataset not exist
-                                    status,out = 0,''
+                                    status,out = True,''
                                     dsExists = False
                         else:
-                            status,out = 0,''
-                        if status != 0 and out.find('DQFrozenDatasetException') == -1 and \
-                               out.find("DQUnknownDatasetException") == -1 and out.find("DQSecurityException") == -1 and \
-                               out.find("DQDeletedDatasetException") == -1 and out.find("DQUnknownDatasetException") == -1:
+                            status,out = True,''
+                        if not status:
                             _logger.error('{0} failed to freeze with {1}'.format(name,out))
                         else:
                             self.proxyLock.acquire()
@@ -454,9 +452,9 @@ class Freezer (threading.Thread):
                             # set tobedeleted to dis
                             setTobeDeletedToDis(name)
                             # count # of files
-                            status,out = ddm.DQ2.main('getNumberOfFiles',name)
-                            if status != 0:
-                                if not 'DQUnknownDatasetException' in out:
+                            status,out = rucioAPI.getNumberOfFiles(name)
+                            if status is not True:
+                                if status is False:
                                     _logger.error(out)
                             else:
                                 _logger.debug(out)                                            
@@ -466,7 +464,7 @@ class Freezer (threading.Thread):
                                     if nFile == 0:
                                         # erase dataset
                                         _logger.debug('erase %s' % name)                                
-                                        status,out = ddm.DQ2.main('eraseDataset',name)
+                                        status,out = rucioAPI.eraseDataset(name)
                                         _logger.debug('OK with %s' % name)
                                 except:
                                     pass
@@ -580,13 +578,13 @@ class T2Cleaner (threading.Thread):
                         tmpRepSites = out
                         # check if there is active subscription
                         _logger.debug('listSubscriptions %s' % name)
-                        subStat,subOut = ddm.DQ2.main('listSubscriptions',name)
-                        if subStat != 0:
+                        subStat,subOut = rucioAPI.listSubscriptions(name)
+                        if not subStat:
                             _logger.error("cannot get subscriptions for %s" % name) 
                             _logger.error(subOut)
                         _logger.debug('subscriptions for %s = %s' % (name,subOut))
                         # active subscriotions
-                        if subOut != '[]':
+                        if len(subOut) > 0:
                             _logger.debug("wait %s due to active subscription" % name)
                             continue
                         # check cloud
@@ -623,27 +621,11 @@ class T2Cleaner (threading.Thread):
                             # delete replica for sub
                             if re.search('_sub\d+$',name) != None and t2DDMs != []:
                                 setMetaFlag = True
-                                for tmpT2DDM in t2DDMs:
-                                    _logger.debug('setReplicaMetaDataAttribute %s %s' % (name,tmpT2DDM))
-                                    status,out = ddm.DQ2.main('setReplicaMetaDataAttribute',name,tmpT2DDM,'pin_lifetime','')
-                                    if status != 0:
-                                        _logger.error(out)
-                                        if out.find('DQFrozenDatasetException')  == -1 and \
-                                               out.find("DQUnknownDatasetException") == -1 and out.find("DQSecurityException") == -1 and \
-                                               out.find("DQDeletedDatasetException") == -1 and out.find("DQUnknownDatasetException") == -1 and \
-                                               out.find("No replica found") == -1:
-                                            setMetaFlag = False
-                                if not setMetaFlag:            
-                                    continue
                                 _logger.debug(('deleteDatasetReplicas',name,t2DDMs))
-                                status,out = ddm.DQ2.main('deleteDatasetReplicas',name,t2DDMs,0,False,False,False,False,False,'00:00:00')
-                                if status != 0:
+                                status,out = rucioAPI.deleteDatasetReplicas(name,t2DDMs)
+                                if not status:
                                     _logger.error(out)
-                                    if out.find('DQFrozenDatasetException')  == -1 and \
-                                           out.find("DQUnknownDatasetException") == -1 and out.find("DQSecurityException") == -1 and \
-                                           out.find("DQDeletedDatasetException") == -1 and out.find("DQUnknownDatasetException") == -1 and \
-                                           out.find("No replica found") == -1:
-                                        continue
+                                    continue
                             else:
                                 _logger.debug('no delete for %s due to empty target in %s' % (name,listOut))
                     # update        
@@ -659,7 +641,8 @@ class T2Cleaner (threading.Thread):
             pass
         self.pool.remove(self)
         self.lock.release()
-                            
+
+"""                            
 # delete dataset replica from T2
 _logger.debug("==== delete datasets from T2 ====")
 timeLimitU = datetime.datetime.utcnow() - datetime.timedelta(minutes=30)
@@ -703,7 +686,7 @@ while True:
     t2cleanThreadPool.join()
     if len(res) < maxRows:
         break
-
+"""
 
 # delete dis datasets
 class EraserThr (threading.Thread):
@@ -728,39 +711,11 @@ class EraserThr (threading.Thread):
                 # delete
                 _logger.debug("Eraser %s dis %s %s" % (self.operationType,modDate,name))
                 # delete or shorten
-                if self.operationType == 'deleting':
-                    # erase
-                    endStatus = 'deleted'
-                    status,out = ddm.DQ2.main('eraseDataset',name)
-                    if status != 0 and out.find('DQFrozenDatasetException') == -1 and \
-                           out.find("DQUnknownDatasetException") == -1 and out.find("DQSecurityException") == -1 and \
-                           out.find("DQDeletedDatasetException") == -1 and out.find("DQUnknownDatasetException") == -1:
-                        _logger.error(out)
-                        continue
-                else:
-                    # change replica lifetime
-                    endStatus = 'shortened'
-                    # get list of replicas
-                    status,out = rucioAPI.listDatasetReplicas(name)
-                    if status != 0:
-                        _logger.error(out)
-                        continue
-                    if True:
-                        tmpRepSites = out
-                        # set replica lifetime
-                        setMetaFlag = True
-                        for tmpDDM in tmpRepSites.keys():
-                            _logger.debug('setReplicaMetaDataAttribute %s %s' % (name,tmpDDM))
-                            status,out = ddm.DQ2.main('setReplicaMetaDataAttribute',name,tmpDDM,'lifetime','1 days')
-                            if status != 0:
-                                _logger.error(out)
-                                if out.find('DQFrozenDatasetException')  == -1 and \
-                                       out.find("DQUnknownDatasetException") == -1 and out.find("DQSecurityException") == -1 and \
-                                       out.find("DQDeletedDatasetException") == -1 and out.find("DQUnknownDatasetException") == -1 and \
-                                       out.find("No replica found") == -1:
-                                    setMetaFlag = False
-                        if not setMetaFlag:
-                            continue
+                endStatus = 'deleted'
+                status,out = rucioAPI.eraseDataset(name)
+                if not status:
+                    _logger.error(out)
+                    continue
                 _logger.debug('OK with %s' % name)
                 # update
                 self.proxyLock.acquire()
@@ -771,7 +726,8 @@ class EraserThr (threading.Thread):
                                      varMap)
                 self.proxyLock.release()
         except:
-            pass
+            errStr = traceback.format_exc()
+            _logger.error(errStr)
         self.pool.remove(self)
         self.lock.release()
 
@@ -782,41 +738,45 @@ timeLimitL = datetime.datetime.utcnow() - datetime.timedelta(days=3)
 disEraseLock = threading.Semaphore(5)
 disEraseProxyLock = threading.Lock()
 disEraseThreadPool = ThreadPool()
-maxRows = 100000
+#maxRows = 100000
+maxRows = 5000
 for targetStatus in ['deleting','shortening']:
-    # lock
-    disEraseLock.acquire()
-    # get datasets
-    varMap = {}
-    varMap[':modificationdateU'] = timeLimitU
-    varMap[':modificationdateL'] = timeLimitL    
-    varMap[':type']   = 'dispatch'
-    varMap[':status'] = targetStatus
-    sqlQuery = "type=:type AND status=:status AND (modificationdate BETWEEN :modificationdateL AND :modificationdateU) AND rownum <= %s" % maxRows     
-    disEraseProxyLock.acquire()
-    proxyS = taskBuffer.proxyPool.getProxy()
-    res = proxyS.getLockDatasets(sqlQuery,varMap,modTimeOffset='90/24/60')
-    taskBuffer.proxyPool.putProxy(proxyS)
-    if res == None:
-        _logger.debug("# of dis datasets for %s: None" % targetStatus)
-    else:
-        _logger.debug("# of dis datasets for %s: %s" % (targetStatus,len(res)))
-    if res==None or len(res)==0:
-        disEraseProxyLock.release()
+    for i in range(10):
+        # lock
+        disEraseLock.acquire()
+        # get datasets
+        varMap = {}
+        varMap[':modificationdateU'] = timeLimitU
+        varMap[':modificationdateL'] = timeLimitL    
+        varMap[':type']   = 'dispatch'
+        varMap[':status'] = targetStatus
+        sqlQuery = "type=:type AND status=:status AND (modificationdate BETWEEN :modificationdateL AND :modificationdateU) AND rownum <= %s" % maxRows     
+        disEraseProxyLock.acquire()
+        proxyS = taskBuffer.proxyPool.getProxy()
+        res = proxyS.getLockDatasets(sqlQuery,varMap,modTimeOffset='90/24/60')
+        taskBuffer.proxyPool.putProxy(proxyS)
+        if res == None:
+            _logger.debug("# of dis datasets for %s: None" % targetStatus)
+        else:
+            _logger.debug("# of dis datasets for %s: %s" % (targetStatus,len(res)))
+        if res==None or len(res)==0:
+            disEraseProxyLock.release()
+            disEraseLock.release()
+            break
+        disEraseProxyLock.release()            
+        # release
         disEraseLock.release()
-        break
-    disEraseProxyLock.release()            
-    # release
-    disEraseLock.release()
-    # run disEraser
-    iRows = 0
-    nRows = 500
-    while iRows < len(res):        
-        disEraser = EraserThr(disEraseLock,disEraseProxyLock,res[iRows:iRows+nRows],
-                              disEraseThreadPool,targetStatus)
-        disEraser.start()
-        iRows += nRows
-    disEraseThreadPool.join()
+        # run disEraser
+        iRows = 0
+        nRows = 500
+        while iRows < len(res):        
+            disEraser = EraserThr(disEraseLock,disEraseProxyLock,res[iRows:iRows+nRows],
+                                  disEraseThreadPool,targetStatus)
+            disEraser.start()
+            iRows += nRows
+        disEraseThreadPool.join()
+        if len(res) < 100:
+            break
 
 
 _memoryCheck("finisher")
@@ -845,21 +805,14 @@ class FinisherThr (threading.Thread):
             for job in jobs:
                 if job == None or job.jobStatus == 'unknown':
                     continue
-                # use BNL by default
-                dq2URL = siteMapper.getSite('BNL_ATLAS_1').dq2url
-                dq2SE  = []
-                # get LFC and SEs
+                seList = ['dummy']
+                tmpNucleus = siteMapper.getNucleus(job.nucleus)
+                # get SEs
                 if job.prodSourceLabel == 'user' and not siteMapper.siteSpecList.has_key(job.destinationSE):
                     # using --destSE for analysis job to transfer output
-                    try:
-                        dq2URL = 'rucio://atlas-rucio.cern.ch:/grid/atlas'
-                        match = re.search('.+://([^:/]+):*\d*/*',dataservice.DDM.toa.getSiteProperty(job.destinationSE,'srm')[-1])
-                        if match != None:
-                            dq2SE.append(match.group(1))
-                    except:
-                        type, value, traceBack = sys.exc_info()
-                        _logger.error("%s Failed to get DQ2/SE with %s %s" % (job.PandaID,type,value))
-                        continue
+                    seList = [job.destinationSE]
+                elif tmpNucleus != None:
+                    seList = tmpNucleus.allDdmEndPoints.keys()
                 elif siteMapper.checkCloud(job.cloud):
                     # normal production jobs
                     if DataServiceUtils.checkJobDestinationSE(job) == None:
@@ -867,13 +820,7 @@ class FinisherThr (threading.Thread):
                     else:
                         tmpDstID = job.destinationSE
                     tmpDstSite = siteMapper.getSite(tmpDstID)
-                    # get catalog URL
-                    dq2URL = 'rucio://atlas-rucio.cern.ch:/grid/atlas'
-                    if tmpDstSite.se != None:
-                        for tmpDstSiteSE in tmpDstSite.se.split(','):
-                            match = re.search('.+://([^:/]+):*\d*/*',tmpDstSiteSE)
-                            if match != None:
-                                dq2SE.append(match.group(1))
+                    seList = tmpDstSite.ddm_endpoints.getLocalEndPoints()
                 # get LFN list
                 lfns   = []
                 guids  = []
@@ -891,13 +838,15 @@ class FinisherThr (threading.Thread):
                         scopes.append(file.scope)
                         nTokens += len(file.destinationDBlockToken.split(','))
                 # get files in LRC
-                _logger.debug("%s Cloud:%s DQ2URL:%s" % (job.PandaID,job.cloud,dq2URL))
-                okFiles = brokerage.broker_util.getFilesFromLRC(lfns,dq2URL,guids,dq2SE,
-                                                                getPFN=True,scopeList=scopes)
+                _logger.debug("%s Cloud:%s" % (job.PandaID,job.cloud))
+                tmpStat,okFiles = rucioAPI.listFileReplicas(scopes,lfns,seList)
+                if not tmpStat:
+                    _logger.errpr("%s failed to get file replicas" % job.PandaID)
+                    okFiles = {}
                 # count files
                 nOkTokens = 0
-                for okLFN,okPFNs in okFiles.iteritems():
-                    nOkTokens += len(okPFNs)
+                for okLFN,okSEs in okFiles.iteritems():
+                    nOkTokens += len(okSEs)
                 # check all files are ready    
                 _logger.debug("%s nToken:%s nOkToken:%s" % (job.PandaID,nTokens,nOkTokens))
                 if nTokens <= nOkTokens:
@@ -1109,6 +1058,136 @@ for ii in range(1000):
     actThr.start()
 # wait
 activatorThreadPool.join()
+
+
+# thread to delete sub datasets
+class SubDeleter (threading.Thread):
+    def __init__(self,lock,proxyLock,datasets,pool):
+        threading.Thread.__init__(self)
+        self.datasets   = datasets
+        self.lock       = lock
+        self.proxyLock  = proxyLock
+        self.pool       = pool
+        self.pool.add(self)
+                                        
+    def run(self):
+        self.lock.acquire()
+        try:
+            for vuid,name,modDate in self.datasets:
+                # check just in case
+                if re.search('_sub\d+$',name) is None:
+                    _logger.debug("skip non sub %s" % name)
+                    continue
+                _logger.debug("delete sub %s" % name)
+                if name.startswith('pandaddm_') or name.startswith('user.') or name.startswith('group.') \
+                        or name.startswith('hc_test.') or name.startswith('panda.um.'):
+                    dsExists = False
+                else:
+                    dsExists = True
+                    # get PandaIDs
+                    self.proxyLock.acquire()
+                    retF,resF = taskBuffer.querySQLS("SELECT /*+ index(tab FILESTABLE4_DESTDBLOCK_IDX) */ DISTINCT PandaID FROM ATLAS_PANDA.filesTable4 tab WHERE destinationDBlock=:destinationDBlock ",
+                                                     {':destinationDBlock':name})
+                    self.proxyLock.release()
+                    if retF is None:
+                        _logger.error("SQL error for sub {0}".format(name))
+                        continue
+                    else:
+                        _logger.debug("sub {0} has {1} jobs".format(name,len(resF)))
+                        self.proxyLock.acquire()
+                        # check jobs
+                        sqlP  = "SELECT jobStatus FROM ATLAS_PANDA.jobsArchived4 WHERE PandaID=:PandaID "
+                        sqlP += "UNION "
+                        sqlP += "SELECT jobStatus FROM ATLAS_PANDAARCH.jobsArchived WHERE PandaID=:PandaID AND modificationTime>CURRENT_DATE-30 "
+                        allDone = True
+                        for pandaID, in resF:
+                            retP,resP = taskBuffer.querySQLS(sqlP, {':PandaID':pandaID})
+                            if len(resP) == 0:
+                                _logger.debug("skip delete sub {0} PandaID={1} not found".format(name,pandaID))
+                                allDone = False
+                                break
+                            jobStatus = resP[0][0]
+                            if jobStatus not in ['finished','failed','cancelled','closed']:
+                                _logger.debug("skip delete sub {0} PandaID={1} is active {2}".format(name,pandaID,jobStatus))
+                                allDone = False
+                                break
+                        self.proxyLock.release()
+                        if allDone:
+                            _logger.debug("deleting sub %s" % name)
+                            try:
+                                rucioAPI.eraseDataset(name)
+                                status = True
+                            except:
+                                errtype,errvalue = sys.exc_info()[:2]
+                                out = '{0} {1}'.format(errtype,errvalue)
+                                _logger.error('{0} failed to erase with {1}'.format(name,out))
+                        else:
+                            _logger.debug("wait sub %s" % name)
+                            continue
+                # update dataset
+                self.proxyLock.acquire()
+                varMap = {}
+                varMap[':vuid'] = vuid
+                varMap[':ost1'] = 'completed' 
+                varMap[':ost2'] = 'cleanup' 
+                varMap[':newStatus'] = 'deleted' 
+                taskBuffer.querySQLS("UPDATE ATLAS_PANDA.Datasets SET status=:newStatus,modificationdate=CURRENT_DATE WHERE vuid=:vuid AND status IN (:ost1,:ost2) ",
+                                     varMap)
+                self.proxyLock.release()                            
+                _logger.debug("end %s " % name)
+        except:
+            errStr = traceback.format_exc()
+            _logger.error(errStr)
+        self.pool.remove(self)
+        self.lock.release()
+
+                            
+# delete sub datasets
+_logger.debug("==== delete sub datasets ====")
+timeLimitU = datetime.datetime.utcnow() - datetime.timedelta(minutes=30)
+timeLimitL = datetime.datetime.utcnow() - datetime.timedelta(days=14)
+subdeleteLock = threading.Semaphore(5)
+subdeleteProxyLock = threading.Lock()
+subdeleteThreadPool = ThreadPool()
+maxRows = 5000
+while True:
+    # lock
+    subdeleteLock.acquire()
+    # get datasets
+    varMap = {}
+    varMap[':limitU'] = timeLimitU
+    varMap[':limitL'] = timeLimitL    
+    varMap[':type']    = 'output'
+    varMap[':subtype'] = 'sub'
+    varMap[':st1']  = 'completed'
+    varMap[':st2']  = 'cleanup'
+    sqlQuery = "type=:type AND subType=:subtype AND status IN (:st1,:st2) AND (creationdate BETWEEN :limitL AND :limitU) AND (modificationdate BETWEEN :limitL AND :limitU) AND rownum <= %s" % maxRows   
+    subdeleteProxyLock.acquire()
+    proxyS = taskBuffer.proxyPool.getProxy()
+    res = proxyS.getLockDatasets(sqlQuery,varMap,modTimeOffset='90/24/60')
+    taskBuffer.proxyPool.putProxy(proxyS)
+    if res == None:
+        _logger.debug("# of sub datasets to be deleted %s" % res)
+    else:
+        _logger.debug("# of sub datasets to be deleted %s" % len(res))
+    if res==None or len(res)==0:
+        subdeleteProxyLock.release()
+        subdeleteLock.release()
+        break
+    subdeleteProxyLock.release()            
+    # release
+    subdeleteLock.release()
+    # run subdeleter
+    iRows = 0
+    nRows = 500
+    while iRows < len(res):
+        subdeleter = SubDeleter(subdeleteLock,subdeleteProxyLock,res[iRows:iRows+nRows],subdeleteThreadPool)
+        subdeleter.start()
+        iRows += nRows
+    subdeleteThreadPool.join()
+    if len(res) < 100:
+        break
+
 
 
 _memoryCheck("end")

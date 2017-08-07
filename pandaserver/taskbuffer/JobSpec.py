@@ -6,6 +6,7 @@ job specification
 reserveChangedState = False
 
 import re
+import datetime
 
 
 class JobSpec(object):
@@ -29,7 +30,8 @@ class JobSpec(object):
                    'nOutputDataFiles','outputFileBytes','jobMetrics','workQueue_ID','jediTaskID',
                    'jobSubStatus','actualCoreCount','reqID','maxRSS','maxVMEM','maxSWAP','maxPSS',
                    'avgRSS','avgVMEM','avgSWAP','avgPSS','maxWalltime','nucleus','eventService',
-                   'failedAttempt','hs06sec', 'gshare')
+                   'failedAttempt','hs06sec', 'gshare', 'hs06','totRCHAR','totWCHAR','totRBYTES',
+                   'totWBYTES','rateRCHAR','rateWCHAR','rateRBYTES','rateWBYTES','resource_type')
     # slots
     __slots__ = _attributes+('Files','_changedAttrs')
     # attributes which have 0 by default
@@ -52,6 +54,8 @@ class JobSpec(object):
                     }
     # tag for special handling
     _tagForSH = {'altStgOut'        : 'ao',
+                 'inFilePosEvtNum'  : 'if',
+                 'noExecStrCnv'     : 'nc',
                  'putLogToOS'       : 'po',
                  'requestType'      : 'rt',
                  'writeInputToFile' : 'wf',
@@ -83,6 +87,9 @@ class JobSpec(object):
         oldVal = getattr(self,name)
         object.__setattr__(self,name,value)
         newVal = getattr(self,name)
+        if name == 'jobStatus':
+            if oldVal != newVal:
+                self.stateChangeTime = datetime.datetime.utcnow()
         # collect changed attributes
         if oldVal != newVal and not name in self._suppAttrs:
             self._changedAttrs[name] = value
@@ -486,3 +493,81 @@ class JobSpec(object):
             self.Files = newFiles
         except:
             pass
+
+
+
+    # get zip file map
+    def getZipFileMap(self):
+        zipMap = dict()
+        try:
+            if self.jobParameters is not None:
+                zipStr = re.search('<ZIP_MAP>(.+)</ZIP_MAP>',self.jobParameters)
+                if zipStr is not None:
+                    for item in zipStr.group(1).split():
+                        zipFile,conFiles = item.split(':')
+                        conFiles = conFiles.split(',')
+                        zipMap[zipFile] = conFiles
+        except:
+            pass
+        return zipMap
+
+
+
+    # suppress execute string conversion
+    def noExecStrCnv(self):
+        if self.specialHandling != None:
+            return self._tagForSH['noExecStrCnv'] in self.specialHandling.split(',')
+        return False
+
+
+
+    # set to suppress execute string conversion
+    def setNoExecStrCnv(self):
+        if self.specialHandling != None:
+            items = self.specialHandling.split(',')
+        else:
+            items = []
+        if not self._tagForSH['noExecStrCnv'] in items:
+            items.append(self._tagForSH['noExecStrCnv'])
+        self.specialHandling = ','.join(items)
+
+
+
+    # in-file positional event number
+    def inFilePosEvtNum(self):
+        if self.specialHandling != None:
+            return self._tagForSH['inFilePosEvtNum'] in self.specialHandling.split(',')
+        return False
+
+
+
+    # set to use in-file positional event number
+    def setInFilePosEvtNum(self):
+        if self.specialHandling != None:
+            items = self.specialHandling.split(',')
+        else:
+            items = []
+        if not self._tagForSH['inFilePosEvtNum'] in items:
+            items.append(self._tagForSH['inFilePosEvtNum'])
+        self.specialHandling = ','.join(items)
+
+
+
+    # set background-able flag
+    def setBackgroundableFlag(self):
+        self.jobExecutionID = 0
+        if self.prodSourceLabel not in ['managed', 'test']:
+            return
+        try:
+            if self.inputFileBytes / self.maxWalltime > 5000:
+                return
+        except:
+            return
+        try:
+            if self.coreCount <= 1:
+                return
+        except:
+            return
+        if self.currentPriority > 250:
+            return
+        self.jobExecutionID = 1
