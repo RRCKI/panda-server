@@ -84,16 +84,21 @@ class WrappedCursor(object):
             sql = re.sub('`','',sql)
             ret = cur.execute(sql, varDict)
         elif self.backend == 'mysql':
-            print "DEBUG execute : original SQL     %s " % sql
-            print "DEBUG execute : original varDict %s " % varDict
+           
+            #print "DEBUG execute : original SQL     %s " % sql
+            #print "DEBUG execute : original varDict %s " % varDict
             # CURRENT_DATE interval
+             #__KI for case like _DATE-3/24; here 1/24 means 1 hour
+            sql = re.sub("CURRENT_DATE\s*-\s*(\d+)/24", "DATE_SUB(CURRENT_TIMESTAMP,INTERVAL \g<1> HOUR)", sql)
             sql = re.sub("CURRENT_DATE\s*-\s*(\d+|:[^\s\)]+)", "DATE_SUB(CURRENT_TIMESTAMP,INTERVAL \g<1> DAY)", sql)
-            #CURRENT_DATE
-            sql = re.sub('CURRENT_DATE', 'CURRENT_TIMESTAMP', sql)
+            #CURRENT_DATE _mod up to 3 times in line
+            sql = re.sub('CURRENT_DATE', 'CURRENT_TIMESTAMP', sql,3)
             # SYSDATE interval
+             #__KI for case like SYSDATE-3/24; here 1/24 means 1 hour
+            sql = re.sub("SYSDATE\s*-\s*(\d+)/24", "DATE_SUB(SYSDATE,INTERVAL \g<1> HOUR)", sql)
             sql = re.sub("SYSDATE\s*-\s*(\d+|:[^\s\)]+)", "DATE_SUB(SYSDATE,INTERVAL \g<1> DAY)", sql)
-            # SYSDATE
-            sql = re.sub('SYSDATE', 'SYSDATE()', sql)
+            # SYSDATE _mod up to 3 times in line
+            sql = re.sub('SYSDATE', 'SYSDATE()', sql,3)
             # EMPTY_CLOB()
             sql = re.sub('EMPTY_CLOB\(\)', "''", sql)
             # ROWNUM
@@ -111,39 +116,84 @@ class WrappedCursor(object):
             #    sql = re.sub(m.group(0), '', sql)
             # Addressing sequence
             seq_name = ""
-            #if sql.startswith("INSERT")
-            if "INSERT" in sql:
+            sql_update_returning = False
+            tecd=0
+            try:
+             sql=sql.lstrip() #remove all the leading spaces 
+             if sql.startswith("INSERT"):
+            #if "INSERT" in sql:
                 #sql = re.sub('[a-zA-Z\._]+\.nextval','NULL',sql)
+                tecd=100
                 tmpstr = re.search('[a-zA-Z0-9\._]+\.nextval',sql)
                 if tmpstr:
+                        tecd=101
                         schema_name = tmpstr.group(0).split('.')[0]
-                        seq_name = tmpstr.group(0).split('.')[1]
+                        seq_name = tmpstr.group(0).split('.')[1] #this value is used for returning into
                         sql = re.sub('[a-zA-Z0-9\._]+\.nextval','{0}.nextval("{1}")'.format(schema_name,seq_name),sql)
-                m = re.search("RETURNING ([^\s]+) INTO ([^\s]+)", sql, re.I)
-                if m is not None:
-                    returningInto = [{'returning': m.group(1), 'into': m.group(2)}]
+                m1 = re.search('(\w+)\.(\w+)\.currval',sql)
+                if m1: #note that mysql function to add is curval()
+                    tecd=131
+                    sql = re.sub('\w+\.\w+\.currval',m1.group(1)+'.curval("'+m1.group(2)+'")',sql)
+                m2 = re.search("RETURNING ([^\s]+) INTO ([^\s]+)", sql, re.I)
+                if m2 is not None:
+                    tecd=151
+                    returningInto = [{'returning': m2.group(1), 'into': m2.group(2)}]
                     self._returningIntoMySQLpre(returningInto, varDict, cur)
-                    sql = re.sub(m.group(0), '', sql)
+                    sql = re.sub(m2.group(0), '', sql)
 
-            sql_update_returning = False
-            #if sql.startswith("UPDATE")
-            if "UPDATE" in sql:
+             elif sql.startswith("SELECT"):
+            #if "SELECT" in sql:
+                tecd=200
+                #look for "(SELECT ...)" - must change to "(SELECT ...) AS tempT"
+                if not 'MEDIAN' in sql:
+                  m=re.search('FROM \([ ]?SELECT ([^)]+)\)',sql)
+                  if m:
+                    tecd=202
+                    if '(' in m.group(0)[1:]:
+                        tecd=212
+                        # look for "(SELECT ... IN (..) [ AND (...OR...) AND  (SYSDATE-2)]...)" up to 3 (...) inside main (SELECT ...), include complex case of (SELECT ...IN (...) AND (...(...OR...)...(...AND...)...)) with intra () up to 2
+                        #m1 = re.search('\([ ]?SELECT ([^)(]+)(\(([^)]+)\)([^)(]+)?){1,2}([^)]+)?\)',sql)
+                        m1 = re.search('FROM \([ ]?SELECT [^)(]+(\([^)(]+((\([^()]+\)([^()]+)?){1,2})?\)([^()]+)?){1,3}([^()]+)?\)',sql)
+                        sql = re.sub(re.escape(m1.group(0)), m1.group(0)+' AS tmpSelect ',sql)
+                    else:
+                        sql = re.sub(re.escape(m.group(0)), m.group(0)+' AS tmpSelect ',sql)
+                    _logger.debug("SELECT FROM (SELECT) AS tablename")
+                  else: # look for nextval (suppose not in complex select) 
+                    tecd=206
+                    m2 = re.search('(\w+)\.(\w+)\.nextval',sql)
+                    if m2:
+                        tecd=232
+                        sql = re.sub('\w+\.\w+\.nextval',m2.group(1)+'.nextval("'+m2.group(2)+'")',sql)
+
+            #sql_update_returning = False
+             elif sql.startswith("UPDATE"):
+                tecd=300
+            #if "UPDATE" in sql:
                 m = re.search("RETURNING ([^\s]+) INTO ([^\s]+)", sql, re.I)
                 if m is not None:
+                    tecd=311
                     returningInto = [{'returning': m.group(1), 'into': m.group(2)}]
                     self._returningIntoMySQLpre(returningInto, varDict, cur)
                     sql = re.sub(m.group(0), '', sql)
                     #In case of UPDATE in JEDI, RETURNING variables cannot be acquired via sequences - additional select is required.
+                    #__mod can not find such cases for code of 07.2017 (Ora+JedDBProxy)
                     sql_update_returning = True
-
-
-
+                    _logger.debug("UPDATE_RETURNING_INTO HERE")
+            except:
+             #_logger.debug("some except")
+             _logger.debug("some except in " +str(tecd) +" in "+sql)
+             raise
 
             # schema names
-            sql = re.sub('ATLAS_PANDA\.',     panda_config.schemaPANDA + '.',     sql)
-            sql = re.sub('ATLAS_PANDAMETA\.', panda_config.schemaMETA + '.',      sql)
-            sql = re.sub('ATLAS_GRISLI\.',    panda_config.schemaGRISLI + '.',    sql)
-            sql = re.sub('ATLAS_PANDAARCH\.', panda_config.schemaPANDAARCH + '.', sql)
+            # use re.compile('ATLAS_PANDA\.',re.I) #for python 2.6 only - re.sub not understand flags (re.IGNORECASE)
+            sql = re.sub(re.compile('ATLAS_PANDA\.',re.I),     panda_config.schemaPANDA + '.',     sql)
+            sql = re.sub(re.compile('ATLAS_PANDAMETA\.',re.I), panda_config.schemaMETA + '.',      sql)
+            sql = re.sub(re.compile('ATLAS_GRISLI\.',re.I),    panda_config.schemaGRISLI + '.',    sql)
+            sql = re.sub(re.compile('ATLAS_PANDAARCH\.',re.I), panda_config.schemaPANDAARCH + '.', sql)
+#            sql = re.sub('ATLAS_PANDA\.',     panda_config.schemaPANDA + '.',     sql)
+#            sql = re.sub('ATLAS_PANDAMETA\.', panda_config.schemaMETA + '.',      sql)
+#            sql = re.sub('ATLAS_GRISLI\.',    panda_config.schemaGRISLI + '.',    sql)
+#            sql = re.sub('ATLAS_PANDAARCH\.', panda_config.schemaPANDAARCH + '.', sql)
             # bind variables
             newVarDict = {}
             # make sure that :prodDBlockToken will not be replaced by %(prodDBlock)sToken
@@ -168,9 +218,13 @@ class WrappedCursor(object):
                 pass
             _logger.debug("execute : SQL     %s " % sql)
             _logger.debug("execute : varDict %s " % newVarDict)
-            print "DEBUG execute : SQL     %s " % sql
-            print "DEBUG execute : varDict %s " % newVarDict
-            ret = cur.execute(sql, newVarDict)
+            #print "DEBUG execute : SQL     %s " % sql
+            #print "DEBUG execute : varDict %s " % newVarDict
+            try:
+                ret = cur.execute(sql, newVarDict)
+            except:
+                _logger.debug("EXCEPT im mysql"+str(sys.exc_info()[1])+"=="+sql)
+                raise
             if returningInto is not None:
                 #ret = self._returningIntoMySQLpost(returningInto, varDict, cur)
                 #Operate as select last_inserted_id for sequences
@@ -179,8 +233,8 @@ class WrappedCursor(object):
                 elif sql_update_returning: # perform a select to retrieve needed variables. Select is constructed from update.
                     n = re.search("UPDATE ([^\s]+) SET ([^\s]+) WHERE", sql, re.I)
                     if n is not None:
-                        sql_update_returning = " SELECT %s FROM %s WHERE" % (returningInto[0]['returning'], n.group(1)) + sql.replace(n.group(0), "")
-                    ret1 = self.cur.execute(sql_update_returning, newVarDict)
+                        sql_update = " SELECT %s FROM %s WHERE" % (returningInto[0]['returning'], n.group(1)) + sql.replace(n.group(0), "")
+                    ret1 = self.cur.execute(sql_update, newVarDict)
                     vs = returningInto[0]['into'].split(",")
                     ret = self.cur.fetchone()
                     for i in xrange(len(vs)):
@@ -189,13 +243,11 @@ class WrappedCursor(object):
                 else:
                     ret1 = self.cur.execute(" SELECT curval('%s') " % seq_name)
                     ret, = self.cur.fetchone()
-
                     try:
                         varDict[returningInto[0]['into']] = long(ret)
-                        _logger.debug("manage sequence %s valued %s" % (seq_name,ret))
+                        #_logger.debug("for %s manage sequence %s valued %s" % (returningInto[0]['into'],seq_name,ret))
                     except KeyError:
                         pass
-
         return ret
 
 

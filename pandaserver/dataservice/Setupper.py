@@ -113,9 +113,12 @@ class Setupper (threading.Thread):
                 # run main procedure in another process because python doesn't release memory
                 com =  'cd %s > /dev/null 2>&1; export HOME=%s; ' % (panda_config.home_dir_cwd,panda_config.home_dir_cwd)
                 com += 'source %s; ' % panda_config.glite_source
-                com += 'env PYTHONPATH=%s:%s %s/python -Wignore %s/dataservice/forkSetupper.py -i %s' % \
-                       (panda_config.pandaCommon_dir,panda_config.pandaPython_dir,panda_config.native_python,
-                        panda_config.pandaPython_dir,outFileName)
+                # Do not reduce PYTHONPATH in env, as it has more usefull values for Rucio, etc
+#                com += 'env PYTHONPATH=%s:%s %s/python -Wignore %s/dataservice/forkSetupper.py -i %s' % \
+#                       (panda_config.pandaCommon_dir,panda_config.pandaPython_dir,panda_config.native_python,
+#                        panda_config.pandaPython_dir,outFileName)
+                com += '%s/python -Wignore %s/dataservice/forkSetupper.py -i %s' % \
+                        (panda_config.native_python,panda_config.pandaPython_dir,outFileName)
                 if self.onlyTA:
                     com += " -t"
                 if not self.firstSubmission:

@@ -251,12 +251,21 @@ class DBProxy:
         comment = ' /* DBProxy.getConfigValue */'
         methodName = comment.split(' ')[-2].split('.')[-1]
         varMap = {':component': component, ':key': key, ':app': app}
-        sql = """
-        SELECT value, type FROM ATLAS_PANDA.CONFIG
-        WHERE component=:component
-        AND key=:key
-        AND app=:app
-        """
+        if self.backend == 'oracle':
+         sql = """
+         SELECT value, type FROM ATLAS_PANDA.CONFIG
+         WHERE component=:component
+         AND key=:key
+         AND app=:app
+         """
+        else:
+         sql = """
+         SELECT value, type FROM ATLAS_PANDA.CONFIG
+         WHERE component=:component
+         AND 'key'=:key
+         AND app=:app
+         """
+
 
         # If VO is specified, select only the config values for this VO or VO independent values
         if vo:
@@ -392,21 +401,10 @@ class DBProxy:
             self.conn.begin()
             # get jobsetID for event service
             if origEsJob:
-                if self.backend == 'oracle':
-                    sqlESS = "SELECT ATLAS_PANDA.JOBSDEFINED4_PANDAID_SEQ.nextval FROM dual ";
-                    self.cur.arraysize = 10
-                    self.cur.execute(sqlESS+comment, {})
-                    job.jobsetID, = self.cur.fetchone()
-                else:
-                    #panda_config.backend == 'mysql':
-                    ### fake sequence
-                    sql = " INSERT INTO ATLAS_PANDA.JOBSDEFINED4_PANDAID_SEQ (col) VALUES (NULL) "
-                    self.cur.arraysize = 10
-                    self.cur.execute(sql + comment, {})
-                    #sql2 = """ SELECT LAST_INSERT_ID() """
-                    sql2 = " SELECT ATLAS_PANDA.curval('jobsdefined4_pandaid_seq') "
-                    self.cur.execute(sql2 + comment, {})
-                    job.jobsetID, = self.cur.fetchone()
+                sqlESS = "SELECT ATLAS_PANDA.JOBSDEFINED4_PANDAID_SEQ.nextval FROM dual ";
+                self.cur.arraysize = 10
+                self.cur.execute(sqlESS+comment, {})
+                job.jobsetID, = self.cur.fetchone()
             # check input
             if useJEDI:
                 allInputOK = True
@@ -6485,21 +6483,10 @@ class DBProxy:
                 # use predefined flag
                 freshFlag = definedFreshFlag
             # get serial number
-            if self.backend == 'oracle':
-                sql = "SELECT ATLAS_PANDA.SUBCOUNTER_SUBID_SEQ.nextval FROM dual";
-                self.cur.arraysize = 100
-                self.cur.execute(sql+comment, {})
-                sn, = self.cur.fetchone()
-            else:
-                # panda_config.backend == 'mysql'
-                ### fake sequence
-                sql = " INSERT INTO ATLAS_PANDA.SUBCOUNTER_SUBID_SEQ (col) VALUES (NULL) "
-                self.cur.arraysize = 100
-                self.cur.execute(sql + comment, {})
-                #sql2 = """ SELECT LAST_INSERT_ID() """
-                sql2 = " SELECT ATLAS_PANDA.curval('subcounter_subid_seq') "
-                self.cur.execute(sql2 + comment, {})
-                sn, = self.cur.fetchone()
+            sql = "SELECT ATLAS_PANDA.SUBCOUNTER_SUBID_SEQ.nextval FROM dual";
+            self.cur.arraysize = 100
+            self.cur.execute(sql+comment, {})
+            sn, = self.cur.fetchone()
             # commit
             if not self._commit():
                 raise RuntimeError, 'Commit error'
@@ -6524,20 +6511,9 @@ class DBProxy:
             # start transaction
             self.conn.begin()
             # get serial number
-            if self.backend == 'oracle':
-                sql = "SELECT ATLAS_PANDA.GROUP_JOBID_SEQ.nextval FROM dual";
-                self.cur.execute(sql+comment, {})
-                sn, = self.cur.fetchone()
-            else:
-                # panda_config.backend == 'mysql'
-                ### fake sequence
-                sql = " INSERT INTO ATLAS_PANDA.GROUP_JOBID_SEQ (col) VALUES (NULL) "
-                self.cur.arraysize = 100
-                self.cur.execute(sql + comment, {})
-                #sql2 = """ SELECT LAST_INSERT_ID() """
-                sql2 = " SELECT ATLAS_PANDA.curval('group_jobid_seq') "
-                self.cur.execute(sql2 + comment, {})
-                sn, = self.cur.fetchone()
+            sql = "SELECT ATLAS_PANDA.GROUP_JOBID_SEQ.nextval FROM dual";
+            self.cur.execute(sql+comment, {})
+            sn, = self.cur.fetchone()
             # commit
             if not self._commit():
                 raise RuntimeError, 'Commit error'
@@ -13384,33 +13360,10 @@ class DBProxy:
             sqlT  = "INSERT INTO {0}.T_TASK ".format(schemaDEFT)
             sqlT += "(taskid,status,submit_time,vo,prodSourceLabel,userName,taskName,jedi_task_parameters,priority,current_priority,parent_tid) VALUES "
             varMap = {}
-            if self.backend == 'oracle':
-                sqlT += "({0}.PRODSYS2_TASK_ID_SEQ.nextval,".format(schemaDEFT)
-            else:
-                #panda_config.backend == 'mysql':
-                ### fake sequence
-                sql = " INSERT INTO PRODSYS2_TASK_ID_SEQ (col) VALUES (NULL) "
-                self.cur.arraysize = 100
-                self.cur.execute(sql + comment, {})
-                #sql2 = """ SELECT LAST_INSERT_ID() """
-                sql2 = " SELECT ATLAS_PANDA.curval('prodsys2_task_id_seq') "
-                self.cur.execute(sql2 + comment, {})
-                nextval, = self.cur.fetchone()
-                sqlT += "( :nextval ,".format(schemaDEFT)
-                varMap[':nextval'] = nextval
+            sqlT += "({0}.PRODSYS2_TASK_ID_SEQ.nextval,".format(schemaDEFT)
             sqlT += ":status,CURRENT_DATE,:vo,:prodSourceLabel,:userName,:taskName,:param,:priority,:current_priority,"
             if parent_tid == None:
-                if self.backend == 'oracle':
-                    sqlT += "{0}.PRODSYS2_TASK_ID_SEQ.currval) ".format(schemaDEFT)
-                else:
-                    #panda_config.backend == 'mysql':
-                    ### fake sequence
-                    sql = " SELECT MAX(COL) FROM PRODSYS2_TASK_ID_SEQ "
-                    self.cur.arraysize = 100
-                    self.cur.execute(sql + comment, {})
-                    currval, = self.cur.fetchone()
-                    sqlT += " :currval ) "
-                    varMap[':currval'] = currval
+                sqlT += "{0}.PRODSYS2_TASK_ID_SEQ.currval) ".format(schemaDEFT)
             else:
                 sqlT += ":parent_tid) "
             sqlT += "RETURNING TASKID INTO :jediTaskID"
@@ -18544,6 +18497,8 @@ class DBProxy:
     def bulkFetchFileIDsPanda(self,nIDs):
         comment = ' /* JediDBProxy.bulkFetchFileIDsPanda */'
         methodName = comment.split(' ')[-2].split('.')[-1]
+        if self.backend == 'mysql':
+            return [] 
         tmpLog = LogWrapper(_logger,methodName+' <nIDs={0}>'.format(nIDs))
         tmpLog.debug('start')
         try:
@@ -18726,7 +18681,6 @@ class DBProxy:
         Get the current HS06 distribution for running and queued jobs
         """
         comment = ' /* DBProxy.get_hs_leave_distribution */'
-
         sql_hs_distribution = """
             SELECT gshare, jobstatus_grouped, SUM(HS)
             FROM
@@ -18736,7 +18690,7 @@ class DBProxy:
                          WHEN jobstatus IN('sent', 'running') THEN 'executing'
                          ELSE 'ignore'
                      END jobstatus_grouped
-                 FROM ATLAS_PANDA.JOBS_SHARE_STATS JSS)
+                 FROM ATLAS_PANDA.JOBS_SHARE_STATS) JSS
             GROUP BY gshare, jobstatus_grouped
             """
 

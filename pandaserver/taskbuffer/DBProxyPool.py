@@ -27,7 +27,7 @@ class DBProxyPool:
         _logger.debug("init")
         self.proxyList = Queue.Queue(nConnection)
         for i in range(nConnection):
-            _logger.debug("connect -> %s " % i)
+            _logger.debug("connect -> %s %s" % (i,panda_config.usedbtimeout))
             if dbProxyClass != None:
                 proxy = dbProxyClass()
             elif useTimeout and hasattr(panda_config,'usedbtimeout') and \
