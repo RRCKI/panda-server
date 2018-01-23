@@ -534,7 +534,7 @@ class UserIF:
                 # convert to map
                 tmpSpec = {}
                 for attr in spec._attributes:
-                    if attr in ['ddm_endpoints']:
+                    if attr in ['ddm_endpoints_input', 'ddm_endpoints_output', 'ddm_input', 'ddm_output', 'setokens_input']:
                         continue
                     tmpSpec[attr] = getattr(spec,attr)
                 specList[id] = tmpSpec
@@ -971,7 +971,7 @@ class UserIF:
     def updateWorkers(self,user,host,harvesterID,data):
         ret = self.taskBuffer.updateWorkers(harvesterID,data)
         if ret is None:
-            retVal = (False,'database error')
+            retVal = (False,'database error in the panda server')
         else:
             retVal = (True,ret)
         # serialize 
@@ -2061,7 +2061,7 @@ def changeTaskSplitRulePanda(req,jediTaskID,attrName,attrValue):
     except:
         return pickle.dumps((False,'jediTaskID must be an integer'))        
     # check attribute
-    if not attrName in ['TW','EC','ES','MF','NG']:
+    if not attrName in ['TW','EC','ES','MF','NG','NI']:
         return pickle.dumps((2,"disallowed to update {0}".format(attrName)))
     ret = userIF.changeTaskSplitRulePanda(jediTaskID,attrName,attrValue)
     return pickle.dumps((ret,None))

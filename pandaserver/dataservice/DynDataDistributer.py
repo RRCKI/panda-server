@@ -392,7 +392,7 @@ class DynDataDistributer:
         for cloud in self.pd2pClouds:
             # DQ2 prefix of T1
             tmpT1SiteID = self.siteMapper.getCloud(cloud)['source']
-            tmpT1DQ2ID  = self.siteMapper.getSite(tmpT1SiteID).ddm
+            tmpT1DQ2ID  = self.siteMapper.getSite(tmpT1SiteID).ddm_input # TODO: check with Tadashi
             prefixDQ2T1 = re.sub('[^_]+DISK$','',tmpT1DQ2ID)
             # loop over all datasets     
             for tmpDS,tmpRepMap in tmpRepMaps.iteritems():
@@ -440,7 +440,7 @@ class DynDataDistributer:
                     if tmpSiteSpec.cloud != cloud:
                         continue
                     # prefix of DQ2 ID
-                    prefixDQ2 = re.sub('[^_]+DISK$','',tmpSiteSpec.ddm)
+                    prefixDQ2 = re.sub('[^_]+DISK$','',tmpSiteSpec.ddm_input) # TODO: Check with Tadashi
                     # skip T1
                     if prefixDQ2 == prefixDQ2T1:
                         continue
@@ -492,7 +492,7 @@ class DynDataDistributer:
         if not self.siteMapper.checkSite(sitename):
             self.putLog("cannot find SiteSpec for %s" % sitename)
             return ''
-        dq2ID = self.siteMapper.getSite(sitename).ddm
+        dq2ID = self.siteMapper.getSite(sitename).ddm_input # TODO: check with Tadashi
         if True:
             # data
             matchEOS = re.search('_EOS[^_]+DISK$',dq2ID)
@@ -966,7 +966,7 @@ class DynDataDistributer:
 
 
     # conver event/run list to datasets
-    def convertEvtRunToDatasets(self,runEvtList,dsType,streamName,dsFilters,amiTag,user,runEvtGuidMap):
+    def convertEvtRunToDatasets(self,runEvtList,dsType,streamName,dsFilters,amiTag,user,runEvtGuidMap,ei_api):
         self.putLog('convertEvtRunToDatasets type=%s stream=%s dsPatt=%s amitag=%s' % \
                     (dsType,streamName,str(dsFilters),amiTag))
         # check data type
@@ -992,17 +992,20 @@ class DynDataDistributer:
                 iEventsTotal += nEventsPerLoop
                 regStart = datetime.datetime.utcnow()
                 guidListELSSI,tmpCom,tmpOut,tmpErr = elssiIF.doLookup(tmpRunEvtList,stream=streamName,tokens=streamRef,
-                                                                      amitag=amiTag,user=user)
+                                                                      amitag=amiTag,user=user,ei_api=ei_api)
                 regTime = datetime.datetime.utcnow()-regStart
+                self.putLog("Hadoop EI command: {0}".format(tmpCom))
                 self.putLog("Hadoop EI took {0}.{1:03d} sec for {2} events" .format(regTime.seconds,
                                                                                     regTime.microseconds/1000,
                                                                                     len(tmpRunEvtList)))
                 regStart = datetime.datetime.utcnow()
+                """
                 statOra,guidListOraEI = eiTaskBuffer.getGUIDsFromEventIndex(tmpRunEvtList,streamName,amiTag,dsType)
                 regTime = datetime.datetime.utcnow()-regStart
                 self.putLog("Oracle EI took {0}.{1:03d} sec for {2} events" .format(regTime.seconds,
                                                                                     regTime.microseconds/1000,
                                                                                     len(tmpRunEvtList)))
+                """
                 # failed
                 if not tmpErr in [None,''] or len(guidListELSSI) == 0:
                     self.putLog(tmpCom)
@@ -1015,10 +1018,12 @@ class DynDataDistributer:
                     paramStr = 'Run:%s Evt:%s Stream:%s' % (runNr,evtNr,streamName)
                     self.putLog(paramStr)
                     tmpRunEvtKey = (long(runNr),long(evtNr))
+                    """
                     # check in Oracle EI
                     if not tmpRunEvtKey in guidListOraEI:
                         errStr = "no GUIDs were found in Oracle EI for %s" % paramStr
                         self.putLog(errStr)
+                    """
                     # not found
                     if not tmpRunEvtKey in guidListELSSI:
                         self.putLog(tmpCom)
@@ -1044,10 +1049,11 @@ class DynDataDistributer:
                 return failedRet
             # empty
             if tmpDsMap == {}:
-                self.putLog("there is no dataset for Run:%s Evt:%s" % (runNr,evtNr),type='error')
+                self.putLog("there is no dataset for Run:%s Evt:%s GUIDs:%s" % (runNr,evtNr,str(tmpguids)),type='error')
                 return fatalRet
             if len(tmpDsMap) != 1:
-                self.putLog("there are multiple datasets %s for Run:%s Evt:%s" % (str(tmpDsMap),runNr,evtNr),
+                self.putLog("there are multiple datasets %s for Run:%s Evt:%s GUIDs:%s" % (str(tmpDsMap),runNr,evtNr,
+                                                                                           str(tmpguids)),
                             type='error')
                 return fatalRet
             # append

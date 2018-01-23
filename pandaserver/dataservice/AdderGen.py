@@ -10,6 +10,7 @@ import time
 import fcntl
 import datetime
 import commands
+import traceback
 import xml.dom.minidom
 import ErrorCode
 import uuid
@@ -69,6 +70,18 @@ class AdderGen:
         file.close()
 
 
+    # get plugin class
+    def getPluginClass(self, tmpVO):
+        # instantiate concrete plugin
+        adderPluginClass = panda_config.getPlugin('adder_plugins',tmpVO)
+        if adderPluginClass == None:
+            # use ATLAS plugin by default
+            from AdderAtlasPlugin import AdderAtlasPlugin
+            adderPluginClass = AdderAtlasPlugin
+        self.logger.debug('plugin name {0}'.format(adderPluginClass.__name__))
+        return adderPluginClass
+
+
     # main
     def run(self):
         try:
@@ -113,6 +126,16 @@ class AdderGen:
                 self.logger.error(errMsg)
                 # FIXME
                 raise RuntimeError, errMsg
+            elif self.jobStatus == EventServiceUtils.esRegStatus:
+                # instantiate concrete plugin
+                adderPluginClass = self.getPluginClass(self.job.VO)
+                adderPlugin = adderPluginClass(self.job,
+                                               taskBuffer=self.taskBuffer,
+                                               siteMapper=self.siteMapper,
+                                               logger=self.logger)
+                # execute
+                self.logger.debug('plugin is ready for ES file registration')
+                adderPlugin.registerEventServiceFiles()
             else:
                 # check file status in JEDI
                 if not self.job.isCancelled() and not self.job.taskBufferErrorCode in [taskbuffer.ErrorCode.EC_PilotRetried]:
@@ -124,7 +147,9 @@ class AdderGen:
                         # set job status to failed since some file status is wrong in JEDI 
                         self.jobStatus = 'failed'
                         self.job.ddmErrorCode = ErrorCode.EC_Adder
-                        self.job.ddmErrorDiag = "wrong file status in source database"
+                        errStr = "inconsistent file status between Panda and JEDI. "
+                        errStr += "failed to avoid duplicated processing caused by synchronization failure"
+                        self.job.ddmErrorDiag = errStr
                         self.logger.debug("set jobStatus={0} since input is inconsistent between Panda and JEDI".format(self.jobStatus))
                     elif self.job.jobSubStatus in ['pilot_closed']:
                         # terminated by the pilot
@@ -172,18 +197,8 @@ class AdderGen:
                 if parseResult < 2:
                     # intraction with DDM
                     try:
-                        # set VO=local for DDM free
-                        if self.job.destinationSE == 'local':
-                            tmpVO = 'local'
-                        else:
-                            tmpVO = self.job.VO
                         # instantiate concrete plugin
-                        adderPluginClass = panda_config.getPlugin('adder_plugins',tmpVO)
-                        if adderPluginClass == None:
-                            # use ATLAS plugin by default
-                            from AdderAtlasPlugin import AdderAtlasPlugin
-                            adderPluginClass = AdderAtlasPlugin
-                        self.logger.debug('plugin name {0}'.format(adderPluginClass.__name__))
+                        adderPluginClass = self.getPluginClass(self.job.VO)
                         adderPlugin = adderPluginClass(self.job,
                                                        taskBuffer=self.taskBuffer,
                                                        siteMapper=self.siteMapper,
@@ -196,7 +211,7 @@ class AdderGen:
                         self.logger.debug('plugin done with %s' % (addResult.statusCode))
                     except:
                         errtype,errvalue = sys.exc_info()[:2]
-                        self.logger.error("failed to execute AdderPlugin for VO={0} with {1}:{2}".format(tmpVO,
+                        self.logger.error("failed to execute AdderPlugin for VO={0} with {1}:{2}".format(self.job.VO,
                                                                                                          errtype,
                                                                                                          errvalue)) 
                         addResult = None
@@ -235,6 +250,10 @@ class AdderGen:
                         source = 'ddmErrorCode'
                         error_code = self.job.ddmErrorCode
                         error_diag = self.job.ddmErrorDiag
+                    elif self.job.transExitCode:
+                        source = 'transExitCode'
+                        error_code = self.job.transExitCode
+                        error_diag = ''
             
                     # _logger.info("updatejob has source %s, error_code %s and error_diag %s"%(source, error_code, error_diag))
                     
@@ -244,7 +263,7 @@ class AdderGen:
                             retryModule.apply_retrial_rules(self.taskBuffer, self.job.PandaID, source, error_code, error_diag, self.job.attemptNr)
                             self.logger.debug("apply_retrial_rules is back")
                         except Exception as e:
-                            self.logger.error("apply_retrial_rules excepted and needs to be investigated (%s)"%(e))
+                            self.logger.error("apply_retrial_rules excepted and needs to be investigated (%s): %s"%(e, traceback.format_exc()))
                     
                     self.job.jobStatus = 'failed'
                     for file in self.job.Files:
@@ -316,6 +335,28 @@ class AdderGen:
                             self.logger.debug(": %s %s" % (type,value))
                             self.logger.debug("cannot unlock XML")
                         return
+
+                    try:
+                        # updateJobs was successful and it failed a job with taskBufferErrorCode
+                        self.logger.debug("AdderGen.run will peek the job")
+                        job_tmp = self.taskBuffer.peekJobs([self.job.PandaID], fromDefined=False, fromArchived=True,
+                                                           fromWaiting=False)[0]
+                        self.logger.debug("status {0}, taskBufferErrorCode {1}, taskBufferErrorDiag {2}".format(job_tmp.jobStatus,
+                                                                                                                job_tmp.taskBufferErrorCode,
+                                                                                                                job_tmp.taskBufferErrorDiag))
+                        if job_tmp.jobStatus == 'failed' and job_tmp.taskBufferErrorCode:
+                            source = 'taskBufferErrorCode'
+                            error_code = job_tmp.taskBufferErrorCode
+                            error_diag = job_tmp.taskBufferErrorDiag
+                            self.logger.debug("AdderGen.run 2 will call apply_retrial_rules")
+                            retryModule.apply_retrial_rules(self.taskBuffer, job_tmp.PandaID, source, error_code,
+                                                            error_diag, job_tmp.attemptNr)
+                            self.logger.debug("apply_retrial_rules 2 is back")
+                    except IndexError:
+                        pass
+                    except Exception as e:
+                        self.logger.error("apply_retrial_rules 2 excepted and needs to be investigated (%s): %s" % (e, traceback.format_exc()))
+
                     # setup for closer
                     if not (EventServiceUtils.isEventServiceJob(self.job) and self.job.isCancelled()):
                         destDBList = []
@@ -380,16 +421,18 @@ class AdderGen:
                 self.lockXML.close()            
         except:
             type, value, traceBack = sys.exc_info()
-            self.logger.debug(": %s %s" % (type,value))
-            self.logger.debug("except")
+            errStr = ": %s %s " % (type,value)
+            errStr += traceback.format_exc()
+            self.logger.error(errStr)
+            self.logger.error("except")
             # unlock XML just in case
             try:
                 if self.lockXML != None:
                     fcntl.flock(self.lockXML.fileno(), fcntl.LOCK_UN)
             except:
                 type, value, traceBack = sys.exc_info()
-                self.logger.debug(": %s %s" % (type,value))
-                self.logger.debug("cannot unlock XML")
+                self.logger.error(": %s %s" % (type,value))
+                self.logger.error("cannot unlock XML")
 
 
     # parse XML
@@ -473,21 +516,71 @@ class AdderGen:
                 if fullLFN != None:
                     fullLfnMap[lfn] = fullLFN
         except:
-            # check if file exists
-            if os.path.exists(self.xmlFile):
-                type, value, traceBack = sys.exc_info()
-                self.logger.error(": %s %s" % (type,value))
-                # set failed anyway
-                self.job.jobStatus = 'failed'
-                # XML error happens when pilot got killed due to wall-time limit or failures in wrapper
-                if (self.job.pilotErrorCode in [0,'0','NULL']) and \
-                   (self.job.transExitCode  in [0,'0','NULL']):
-                    self.job.ddmErrorCode = ErrorCode.EC_Adder
-                    self.job.ddmErrorDiag = "Could not get GUID/LFN/MD5/FSIZE/SURL from pilot XML"
-                return 2
-            else:
-                # XML was deleted
-                return 1
+            # parse json
+            try:
+                import json
+                with open(self.xmlFile) as tmpF:
+                    jsonDict = json.load(tmpF)
+                    for lfn, fileData in jsonDict.iteritems():
+                        lfn = str(lfn)
+                        fsize   = None
+                        md5sum  = None
+                        adler32 = None
+                        surl    = None
+                        fullLFN = None
+                        guid = str(fileData['guid'])
+                        if 'fsize' in fileData:
+                            fsize = long(fileData['fsize'])
+                        if 'md5sum' in fileData:
+                            md5sum = str(fileData['md5sum'])
+                            # check
+                            if re.search("^[a-fA-F0-9]{32}$",md5sum) == None:
+                                md5sum = None
+                        if 'adler32' in fileData:
+                            adler32 = str(fileData['adler32'])
+                        if 'surl' in fileData:
+                            surl = str(fileData['surl'])
+                        if 'full_lfn' in fileData:
+                            fullLFN = str(fileData['full_lfn'])
+                        # endpoints
+                        self.extraInfo['endpoint'][lfn] = []
+                        if 'endpoint' in fileData:
+                            self.extraInfo['endpoint'][lfn] = fileData['endpoint']
+                        # error check
+                        if (not lfn in inputLFNs) and (fsize == None or (md5sum == None and adler32 == None)):
+                            if EventServiceUtils.isEventServiceMerge(self.job):
+                                continue
+                            else:
+                                raise RuntimeError, 'fsize/md5sum/adler32/surl=None'
+                        # append
+                        lfns.append(lfn)
+                        guids.append(guid)
+                        fsizes.append(fsize)
+                        md5sums.append(md5sum)
+                        surls.append(surl)
+                        if adler32 != None:
+                            # use adler32 if available
+                            chksums.append("ad:%s" % adler32)
+                        else:
+                            chksums.append("md5:%s" % md5sum)
+                        if fullLFN != None:
+                            fullLfnMap[lfn] = fullLFN
+            except:
+                # check if file exists
+                if os.path.exists(self.xmlFile):
+                    type, value, traceBack = sys.exc_info()
+                    self.logger.error(": %s %s" % (type,value))
+                    # set failed anyway
+                    self.job.jobStatus = 'failed'
+                    # XML error happens when pilot got killed due to wall-time limit or failures in wrapper
+                    if (self.job.pilotErrorCode in [0,'0','NULL']) and \
+                       (self.job.transExitCode  in [0,'0','NULL']):
+                        self.job.ddmErrorCode = ErrorCode.EC_Adder
+                        self.job.ddmErrorDiag = "Could not get GUID/LFN/MD5/FSIZE/SURL from pilot XML"
+                    return 2
+                else:
+                    # XML was deleted
+                    return 1
         # parse metadata to get nEvents
         try:
             root  = xml.dom.minidom.parseString(self.job.metadata)

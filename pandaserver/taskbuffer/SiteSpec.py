@@ -4,11 +4,13 @@ site specification
 """
 
 import re
+from . import JobUtils
+
 
 class SiteSpec(object):
     # attributes
-    _attributes = ('sitename','nickname','dq2url','cloud','ddm','lfchost','type','gatekeeper',
-                   'releases','memory','maxtime','status','space','retry','cmtconfig','setokens',
+    _attributes = ('sitename','nickname','dq2url','cloud','ddm','ddm_input','ddm_output','lfchost','type','gatekeeper',
+                   'releases','memory','maxtime','status','space','retry','cmtconfig','setokens_input','setokens_output',
                    'glexec','priorityoffset','allowedgroups','defaulttoken','queue',
                    'localqueue','validatedreleases','accesscontrol','copysetup','maxinputsize',
                    'cachedse','allowdirectaccess','comment','cloudlist','statusmodtime','lfcregister',
@@ -16,9 +18,9 @@ class SiteSpec(object):
                    'iscvmfs','transferringlimit','maxwdir','fairsharePolicy','minmemory','maxmemory',
                    'mintime','allowfax','wansourcelimit','wansinklimit','pandasite',
                    'sitershare','cloudrshare','corepower','wnconnectivity','catchall',
-                   'role','pandasite_state','ddm_endpoints','maxrss','minrss',
+                   'role','pandasite_state','ddm_endpoints_input','ddm_endpoints_output','maxrss','minrss',
                    'direct_access_lan','direct_access_wan','tier','objectstores','is_unified',
-                   'unified_name')
+                   'unified_name','jobseed')
 
     # constructor
     def __init__(self):
@@ -86,7 +88,7 @@ class SiteSpec(object):
 
     # check what type of jobs are allowed
     def getJobSeed(self):
-        tmpVal = self.getValueFromCatchall('jobseed')
+        tmpVal = self.jobseed
         if tmpVal == None:
             return 'std'
         return tmpVal
@@ -149,3 +151,22 @@ class SiteSpec(object):
     # check if opportunistic
     def is_opportunistic(self):
         return self.pledgedCPU == -1
+
+
+
+    # get number of jobs for standby
+    def getNumStandby(self, sw_id, resource_type):
+        # only if in standby
+        if self.status != 'standby':
+            return None
+        numMap = JobUtils.parseNumStandby(self.catchall)
+        # neither gshare or workqueue is definied
+        if sw_id not in numMap:
+            return None
+        # give the total if resource type is undefined
+        if resource_type is None:
+            return sum(numMap[sw_id].values())
+        # give the number for the resource type
+        if resource_type in numMap[sw_id]:
+            return numMap[sw_id][resource_type]
+        return None

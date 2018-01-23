@@ -705,14 +705,14 @@ class TaskBuffer:
     # get jobs
     def getJobs(self,nJobs,siteName,prodSourceLabel,cpu,mem,diskSpace,node,timeout,computingElement,
                 atlasRelease,prodUserID,getProxyKey,countryGroup,workingGroup,allowOtherCountry,
-                taskID,background,resourceType):
+                taskID,background,resourceType,harvester_id,worker_id):
         # get DBproxy
         proxy = self.proxyPool.getProxy()
         # get waiting jobs
         t_before = time.time()
         jobs,nSent = proxy.getJobs(nJobs,siteName,prodSourceLabel,cpu,mem,diskSpace,node,timeout,computingElement,
                                    atlasRelease,prodUserID,countryGroup,workingGroup,allowOtherCountry,
-                                   taskID,background,resourceType)
+                                   taskID,background,resourceType,harvester_id,worker_id)
         t_after = time.time()
         t_total = t_after - t_before
         _logger.debug("getJobs : took {0}s for {1} nJobs={2} prodSourceLabel={3}"
@@ -2028,11 +2028,11 @@ class TaskBuffer:
 
 
     # update site data
-    def updateSiteData(self,hostID,pilotRequests):
+    def updateSiteData(self,hostID,pilotRequests,interval=3):
         # get DBproxy
         proxy = self.proxyPool.getProxy()
         # get serial number
-        ret = proxy.updateSiteData(hostID,pilotRequests)
+        ret = proxy.updateSiteData(hostID,pilotRequests,interval)
         # release proxy
         self.proxyPool.putProxy(proxy)
         # return
@@ -2895,6 +2895,19 @@ class TaskBuffer:
 
 
 
+    # retry module action: set maxAttempt to the current attemptNr to avoid further retries
+    def setNoRetry(self, jobID, jediTaskID, files):
+        # get proxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        ret = proxy.setNoRetry(jobID, jediTaskID, files)
+        # release proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return ret
+
+
+
     # retry module action: increase CPU Time
     def increaseCpuTimeTask(self, jobID, taskID, siteid, files, active):
         # get proxy
@@ -3468,6 +3481,77 @@ class TaskBuffer:
         # return
         return ret
 
+
+    # get minimal resource
+    def getMinimalResource(self):
+        # get DBproxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        ret = proxy.getMinimalResource()
+        # release proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return ret
+
+
+    # get unified pilot streaming queues
+    def ups_get_queues(self):
+        # get DBproxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        ret = proxy.ups_get_queues()
+        # release proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return ret
+
+
+    # load harvester worker stats
+    def ups_load_worker_stats(self):
+        # get DBproxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        ret = proxy.ups_load_worker_stats()
+        # release proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return ret
+
+
+    # load activated job stats
+    def ups_load_activated_job_stats(self, ups_queues):
+        # get DBproxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        ret = proxy.ups_load_activated_job_stats(ups_queues)
+        # release proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return ret
+
+
+    # get the distribution of new workers to submit
+    def ups_new_worker_distribution(self, queue, worker_stats):
+        # get DBproxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        ret = proxy.ups_new_worker_distribution(queue, worker_stats)
+        # release proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return ret
+
+
+    # check event availability
+    def checkEventsAvailability(self, pandaID, jobsetID, jediTaskID):
+        # get DBproxy
+        proxy = self.proxyPool.getProxy()
+        # exec
+        ret = proxy.checkEventsAvailability(pandaID, jobsetID, jediTaskID)
+        # release proxy
+        self.proxyPool.putProxy(proxy)
+        # return
+        return ret
 
 
 # Singleton

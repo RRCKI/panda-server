@@ -179,6 +179,8 @@ class RucioAPI:
             meta['panda_id'] = tmpFile['panda_id']
         if 'campaign' in tmpFile:
             meta['campaign'] = tmpFile['campaign']
+        if 'task_id' in tmpFile:
+            meta['task_id'] = tmpFile['task_id']
         if 'bytes' in tmpFile:
             fsize = tmpFile['bytes']
         else:
@@ -524,7 +526,8 @@ class RucioAPI:
         except DataIdentifierNotFound:
             return None,'dataset not found'
         except:
-            errMsg = '{0} {1}'.format(errtype.__name__,errvalue)
+            errtype, errvalue = sys.exc_info()[:2]
+            errMsg = '{0} {1}'.format(errtype.__name__, errvalue)
             return False,errMsg
 
 
@@ -542,7 +545,8 @@ class RucioAPI:
         except DataIdentifierNotFound:
             return None,'dataset not found'
         except:
-            errMsg = '{0} {1}'.format(errtype.__name__,errvalue)
+            errtype, errvalue = sys.exc_info()[:2]
+            errMsg = '{0} {1}'.format(errtype.__name__, errvalue)
             return False,errMsg
 
 
@@ -561,7 +565,8 @@ class RucioAPI:
         except DataIdentifierNotFound:
             pass
         except:
-            errMsg = '{0} {1}'.format(errtype.__name__,errvalue)
+            errtype, errvalue = sys.exc_info()[:2]
+            errMsg = '{0} {1}'.format(errtype.__name__, errvalue)
             return False,errMsg
         return True,''
 
@@ -587,7 +592,8 @@ class RucioAPI:
         except DataIdentifierNotFound:
             pass
         except:
-            errMsg = '{0} {1}'.format(errtype.__name__,errvalue)
+            errtype, errvalue = sys.exc_info()[:2]
+            errMsg = '{0} {1}'.format(errtype.__name__, errvalue)
             return False,errMsg
         return True,result
 
@@ -654,7 +660,8 @@ class RucioAPI:
             if userInfo is not None:
                 retVal = True
         except:
-            errMsg = '{0} {1}'.format(errtype.__name__,errvalue)
+            errtype, errvalue = sys.exc_info()[:2]
+            errMsg = '{0} {1}'.format(errtype.__name__, errvalue)
             userInfo = errMsg
         return retVal,userInfo
 

@@ -356,7 +356,17 @@ except:
     errType,errValue = sys.exc_info()[:2]
     _logger.error("check for stuck merging jobs failed with %s %s" % (errType,errValue))
 
-            
+# get sites to skip various timeout
+varMap = {}
+varMap[':status'] = 'paused'
+sql = "SELECT siteid FROM ATLAS_PANDAMETA.schedconfig WHERE status=:status "
+sitesToSkipTO = set()
+status,res = taskBuffer.querySQLS(sql,varMap)
+for siteid, in res:
+    sitesToSkipTO.add(siteid)
+
+_logger.debug("PQs to skip timeout : {0}".format(','.join(sitesToSkipTO)))
+    
 _memoryCheck("watcher")
 
 _logger.debug("Watcher session")
@@ -382,7 +392,6 @@ else:
         thr = Watcher(taskBuffer,id,single=True,sleepTime=60,sitemapper=siteMapper)
         thr.start()
         thr.join()
-        time.sleep(1)
 
 # check heartbeat for analysis jobs in transferring
 timeLimit = datetime.datetime.utcnow() - datetime.timedelta(hours=2)
@@ -403,7 +412,6 @@ else:
         thr = Watcher(taskBuffer,id,single=True,sleepTime=60,sitemapper=siteMapper)
         thr.start()
         thr.join()
-        time.sleep(1)
 
 # check heartbeat for sent jobs
 timeLimit = datetime.datetime.utcnow() - datetime.timedelta(minutes=30)
@@ -421,7 +429,6 @@ else:
         thr = Watcher(taskBuffer,id,single=True,sleepTime=30,sitemapper=siteMapper)
         thr.start()
         thr.join()
-        time.sleep(1)
 
 # check heartbeat for 'holding' analysis/ddm jobs
 timeLimit = datetime.datetime.utcnow() - datetime.timedelta(hours=3)
@@ -454,7 +461,6 @@ else:
         thr = Watcher(taskBuffer,id,single=True,sleepTime=180,sitemapper=siteMapper)
         thr.start()
         thr.join()
-        time.sleep(1)
 
 
 # check heartbeat for high prio production jobs
@@ -477,7 +483,6 @@ else:
         thr = Watcher(taskBuffer,id,single=True,sleepTime=60*timeOutVal,sitemapper=siteMapper)
         thr.start()
         thr.join()
-        time.sleep(1)
 
 # check heartbeat for production jobs
 timeOutVal = 48
@@ -497,7 +502,6 @@ else:
         thr = Watcher(taskBuffer,id,single=True,sleepTime=60*timeOutVal,sitemapper=siteMapper)
         thr.start()
         thr.join()
-        time.sleep(1)
 
 # check heartbeat for ddm jobs
 timeLimit = datetime.datetime.utcnow() - datetime.timedelta(hours=2)
@@ -519,7 +523,6 @@ else:
         thr = Watcher(taskBuffer,id,single=True,sleepTime=120,sitemapper=siteMapper)
         thr.start()
         thr.join()
-        time.sleep(1)
 
 # check heartbeat for production jobs
 timeOutVal = 2
@@ -530,18 +533,20 @@ varMap[':jobStatus1'] = 'running'
 varMap[':jobStatus2'] = 'starting'
 varMap[':jobStatus3'] = 'stagein'
 varMap[':jobStatus4'] = 'stageout'
-status,res = taskBuffer.querySQLS("SELECT PandaID FROM ATLAS_PANDA.jobsActive4 WHERE jobStatus IN (:jobStatus1,:jobStatus2,:jobStatus3,:jobStatus4) AND modificationTime<:modificationTime",
+status,res = taskBuffer.querySQLS("SELECT PandaID,jobStatus,computingSite FROM ATLAS_PANDA.jobsActive4 WHERE jobStatus IN (:jobStatus1,:jobStatus2,:jobStatus3,:jobStatus4) AND modificationTime<:modificationTime",
                               varMap)
 if res == None:
     _logger.debug("# of General Watcher : %s" % res)
 else:
     _logger.debug("# of General Watcher : %s" % len(res))    
-    for (id,) in res:
-        _logger.debug("General Watcher %s" % id)
-        thr = Watcher(taskBuffer,id,single=True,sleepTime=60*timeOutVal,sitemapper=siteMapper)
+    for pandaID,jobStatus,computingSite in res:
+        if computingSite in sitesToSkipTO and jobStatus in ['starting']:
+            _logger.debug("skip General Watcher for PandaID={0} at {1} since timeout is disabled for {2}".format(pandaID,computingSite,jobStatus))
+            continue
+        _logger.debug("General Watcher %s" % pandaID)
+        thr = Watcher(taskBuffer,pandaID,single=True,sleepTime=60*timeOutVal,sitemapper=siteMapper)
         thr.start()
         thr.join()
-        time.sleep(1)
 
 _memoryCheck("reassign")
 
@@ -645,8 +650,9 @@ timeLimitSite = datetime.datetime.utcnow() - datetime.timedelta(hours=inactiveTi
 timeLimitJob  = datetime.datetime.utcnow() - datetime.timedelta(hours=inactiveTimeLimitJob)
 # get PandaIDs
 sql  = 'SELECT distinct computingSite FROM ATLAS_PANDA.jobsActive4 '
-sql += 'WHERE prodSourceLabel=:prodSourceLabel AND jobStatus IN (:jobStatus1,:jobStatus2) '
-sql += 'AND (modificationTime<:timeLimit OR stateChangeTime<:timeLimit) '
+sql += 'WHERE prodSourceLabel=:prodSourceLabel '
+sql += 'AND ((modificationTime<:timeLimit AND jobStatus=:jobStatus1) '
+sql += 'OR (stateChangeTime<:timeLimit AND jobStatus=:jobStatus2)) '
 sql += 'AND lockedby=:lockedby AND currentPriority>=:prioLimit '
 sql += 'AND NOT processingType IN (:pType1) AND relocationFlag<>:rFlag1 '
 varMap = {}
@@ -667,6 +673,9 @@ sqlPI += 'AND (modificationTime<:timeLimit OR stateChangeTime<:timeLimit) '
 sqlPI += 'AND lockedby=:lockedby AND currentPriority>=:prioLimit '
 sqlPI += 'AND computingSite=:site AND NOT processingType IN (:pType1) AND relocationFlag<>:rFlag1 '
 for tmpSite, in resDS:
+    if tmpSite in sitesToSkipTO:
+        _logger.debug('skip reassignJobs at inactive site %s since timeout is disabled' % (tmpSite))
+        continue
     # check if the site is inactive
     varMap = {}
     varMap[':site']  = tmpSite
@@ -693,7 +702,7 @@ for tmpSite, in resDS:
         if resPI != None:
             for pandaID, eventService, attemptNr in resPI:
                 if eventService in [EventServiceUtils.esMergeJobFlagNumber]:
-                    _logger.debug('retrying {0} at inactive site %s' % (pandaID,tmpSite))
+                    _logger.debug('retrying es merge %s at inactive site %s' % (pandaID,tmpSite))
                     taskBuffer.retryJob(pandaID,{},getNewPandaID=True,attemptNr=attemptNr,
                                                  recoverableEsMerge=True)
                 jediJobs.append(pandaID)
@@ -702,7 +711,7 @@ for tmpSite, in resDS:
             iJob = 0
             while iJob < len(jediJobs):
                 _logger.debug('reassignJobs for JEDI at inactive site %s (%s)' % (tmpSite,jediJobs[iJob:iJob+nJob]))
-                Client.killJobs(jediJobs[iJob:iJob+nJob],51)
+                Client.killJobs(jediJobs[iJob:iJob+nJob],51,keepUnmerged=True)
                 iJob += nJob
 
 # reassign defined jobs in defined table
@@ -733,7 +742,7 @@ if len(jediJobs) != 0:
     iJob = 0
     while iJob < len(jediJobs):
         _logger.debug('reassignJobs for JEDI defined jobs (%s)' % jediJobs[iJob:iJob+nJob])
-        Client.killJobs(jediJobs[iJob:iJob+nJob],51)
+        Client.killJobs(jediJobs[iJob:iJob+nJob],51,keepUnmerged=True)
         iJob += nJob
 
 # reassign long-waiting jobs in defined table
@@ -763,7 +772,7 @@ if len(jediJobs) != 0:
     iJob = 0
     while iJob < len(jediJobs):
         _logger.debug('reassignJobs for long JEDI in defined table (%s)' % jediJobs[iJob:iJob+nJob])
-        Client.killJobs(jediJobs[iJob:iJob+nJob],51)
+        Client.killJobs(jediJobs[iJob:iJob+nJob],51,keepUnmerged=True)
         iJob += nJob
 
 
@@ -798,7 +807,7 @@ for tmpCloud in siteMapper.getCloudList():
         iJob = 0
         while iJob < len(jediJobs):
             _logger.debug('reassignJobs for Active T1 JEDI evgensimul (%s)' % jediJobs[iJob:iJob+nJob])
-            Client.killJobs(jediJobs[iJob:iJob+nJob],51)
+            Client.killJobs(jediJobs[iJob:iJob+nJob],51,keepUnmerged=True)
             iJob += nJob
 
 # reassign too long-standing evgen/simul jobs with active state at T2
@@ -819,6 +828,9 @@ try:
         for tmpCloud,tmpComputingSite,tmpJobStatus,tmpCount in res:
             # skip T1
             if tmpComputingSite == siteMapper.getCloud(tmpCloud)['tier1']:
+                continue
+            # skip if timeout is disabled
+            if tmpComputingSite in sitesToSkipTO:
                 continue
             # add cloud/site
             tmpKey = (tmpCloud,tmpComputingSite)
@@ -861,7 +873,7 @@ try:
                     iJob = 0
                     while iJob < len(jediJobs):
                         _logger.debug('reassignJobs for Active T2 JEDI evgensimul (%s)' % jediJobs[iJob:iJob+nJob])
-                        Client.killJobs(jediJobs[iJob:iJob+nJob],51)
+                        Client.killJobs(jediJobs[iJob:iJob+nJob],51,keepUnmerged=True)
                         iJob += nJob
 except:
     errType,errValue = sys.exc_info()[:2]
@@ -874,7 +886,10 @@ status,res = taskBuffer.lockJobsForReassign("ATLAS_PANDA.jobsActive4",timeLimit,
 jobs = []
 jediJobs = []
 if res != None:
-    for pandaID, lockedby, eventService, attemptNr in res:
+    for pandaID, lockedby, eventService, attemptNr, computingSite in res:
+        if computingSite in sitesToSkipTO:
+            _logger.debug('skip reassignJobs for PandaID={0} for long activated in active table since timeout is disabled at {1}'.format(pandaID,computingSite))
+            continue
         if lockedby == 'jedi':
             if eventService in [EventServiceUtils.esMergeJobFlagNumber]:
                 _logger.debug('retrying {0} in long activated' % pandaID)
@@ -897,21 +912,24 @@ if len(jediJobs) != 0:
     iJob = 0
     while iJob < len(jediJobs):
         _logger.debug('reassignJobs for long activated JEDI in active table (%s)' % jediJobs[iJob:iJob+nJob])
-        Client.killJobs(jediJobs[iJob:iJob+nJob],51)
+        Client.killJobs(jediJobs[iJob:iJob+nJob],51,keepUnmerged=True)
         iJob += nJob
 
 # reassign too long starting jobs in active table
 timeLimit = datetime.datetime.utcnow() - datetime.timedelta(hours=48)
 status,res = taskBuffer.lockJobsForReassign("ATLAS_PANDA.jobsActive4",timeLimit,['starting'],['managed'],[],[],[],True,
-                                            onlyReassignable=True,useStateChangeTime=True)
+                                            onlyReassignable=True,useStateChangeTime=True,getEventService=True)
 jobs = []
 jediJobs = []
 if res != None:
-    for (id,lockedby) in res:
+    for pandaID, lockedby, eventService, attemptNr, computingSite in res:
+        if computingSite in sitesToSkipTO:
+            _logger.debug('skip reassignJobs for PandaID={0} for long starting in active table since timeout is disabled at {1}'.format(pandaID,computingSite))
+            continue
         if lockedby == 'jedi':
-            jediJobs.append(id)
+            jediJobs.append(pandaID)
         else:
-            jobs.append(id)
+            jobs.append(pandaID)
 _logger.debug('reassignJobs for long starting in active table -> #%s' % len(jobs))
 if len(jobs) != 0:
     nJob = 100
@@ -926,7 +944,7 @@ if len(jediJobs) != 0:
     iJob = 0
     while iJob < len(jediJobs):
         _logger.debug('reassignJobs for long stating JEDI in active table (%s)' % jediJobs[iJob:iJob+nJob])
-        Client.killJobs(jediJobs[iJob:iJob+nJob],51)
+        Client.killJobs(jediJobs[iJob:iJob+nJob],51,keepUnmerged=True)
         iJob += nJob
         
 
@@ -1034,7 +1052,7 @@ if len(jediJobs) != 0:
     iJob = 0
     while iJob < len(jediJobs):
         _logger.debug('reassignJobs for JEDI Waiting (%s)' % jediJobs[iJob:iJob+nJob])
-        Client.killJobs(jediJobs[iJob:iJob+nJob],51)
+        Client.killJobs(jediJobs[iJob:iJob+nJob],51,keepUnmerged=True)
         iJob += nJob
 """
 

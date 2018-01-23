@@ -1,5 +1,98 @@
 Release Notes
 
+* 1/22/2018
+  * added es_preempted
+
+* 1/18/2018
+  * added checkEventsAvailability
+
+* 1/15/2018
+  * added nStandby
+
+* 1/8/2018
+  * using keepUnmerged to reassign jobs
+  * to kill all consumers when a consumer is killed
+
+* 12/6/2017
+  * changed to avoid reattempts of ES jobs when jobseed is std or status is not online or brokeroff
+
+* 11/29/2017
+  * changed JD to allow xml=json
+
+* 11/24/2017
+  * added a hint to (un)throttle users
+  * disabled OracleEI for https://cern.service-now.com/service-portal/view-incident.do?n=INC1529405
+
+* 11/21/2017
+  * allowing incexec for exhausted
+
+* 11/20/2017
+  * Using AES_MINEVENTSFORMCORE = max(AES_MINEVENTSFORMCORE, schedconfig.corecount)
+
+* 11/10/2017
+  * Changed HS06sec formula to actualcorecount * corepower * duration
+
+* 11/8/2017
+  * setting jobsetID in JEDI_Dataset_Contents
+  * using separate site attribute for jobseed
+
+* 11/1/2017
+  * sending ES consumers to SCORE if there are not enough events
+  * added harvester_id and worker_id in getJobs
+
+* 10/10/2017
+  * updated hint in getJobs
+
+* 10/09/2017
+  * setNoRetry to update also files in running status
+  * added usePrefetcher
+
+* 10/06/2017
+  * added PQ.status=paused
+
+* 10/05/2017
+  * DDMSpec.getAssociatedEndpoint choosing endpoint with lowest order
+
+* 10/02/2017
+  * enabling TEST and SPECIAL endpoints
+
+* 9/27/2017
+  * added resurrectConsumers
+
+* 9/26/2017
+  * using DATADISK for analysis staging-in
+
+* 9/12/2017
+  * locking a file in getEventRanges
+
+* 8/30/2017
+  * metadata registration for ES files
+
+* 8/17/2017
+  * added registerEsFiles
+  * changed AdderAtlas to catch InvalidRSEExpression
+
+* 8/15/2017
+  * removed sleep in copyArchive
+  * removed FOR UPDATE when counting events for now
+
+* 8/9/2017
+  * fixed ppE to exclusively count num of unprocessed events
+
+* 8/8/2017
+  * improved setMerge to try local if remote is unavailable
+  * fixed ppE to keep job status when old job is closed in jobsDefined/Waiting
+  * improved ppE to take unifiedPQ into account
+  * fixed ppE to set resource_type to merge
+
+* 7/26/2017
+  * setting cancelled/failed to es_killed/es_aborted
+  * not to kill consumers in inactive sites when associated consumers are active
+
+* 7/25/2017
+  * added protection against duplicated submission by group users
+  * added blank pilots to harvesterCtl
+
 * 7/17/2017
   * changed ES merge to choose sites with wnconnectivity
 
